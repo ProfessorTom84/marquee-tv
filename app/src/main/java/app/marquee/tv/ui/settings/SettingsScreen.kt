@@ -3,6 +3,7 @@ package app.marquee.tv.ui.settings
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,7 +85,10 @@ fun SettingsScreen(vm: MarqueeVm, nav: Nav, initial: String) {
     Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF1C2550), Color(0xFF0B1024), Color(0xFF05070F)), radius = 2400f, center = androidx.compose.ui.geometry.Offset(1500f, 0f)))) {
         GrainOverlay()
         Row(Modifier.fillMaxSize()) {
-            Column(Modifier.width(210.dp).fillMaxHeight().background(Color(0x08FFFFFF)).padding(start = 40.dp, end = 16.dp, top = 36.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // The menu scrolls: with every section listed it's taller than the screen.
+            app.marquee.tv.ui.components.CalmScroll {
+            Column(Modifier.width(210.dp).fillMaxHeight().background(Color(0x08FFFFFF)).verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .padding(start = 40.dp, end = 16.dp, top = 30.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Settings", style = T.serif(30.sp), modifier = Modifier.padding(bottom = 14.dp))
                 SystemLink("Google TV settings") { vm.app.apps.openSystemSettings() }
                 SystemLink("Wi-Fi & network") { vm.app.apps.openSystemSettings(AndroidSettings.ACTION_WIFI_SETTINGS) }
@@ -99,10 +103,11 @@ fun SettingsScreen(vm: MarqueeVm, nav: Nav, initial: String) {
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
                                 .background(if (section == key) Color(0x1AFFFFFF) else Color.Transparent)
                                 .then(if (f) Modifier.border(1.5.dp, C.Amber, RoundedCornerShape(9.dp)) else Modifier)
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
                         ) { Text(label, style = T.sans(11.sp, if (section == key) FontWeight.ExtraBold else FontWeight.SemiBold, if (section == key || f) C.Text else C.Cool)) }
                     }
                 }
+            }
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 36.dp, end = 48.dp, top = 36.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
