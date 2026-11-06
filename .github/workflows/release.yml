@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag like v0.14.0 (matching versionName in app/build.gradle.kts) and GitHub builds,
+# signs and publishes the APK. Every Marquee TV picks it up within a few hours and installs it while idle.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore signing key
+        run: echo "${{ secrets.MARQUEE_KEYSTORE_B64 }}" | base64 -d > app/marquee-release.jks
+
+      - name: Test and build
+        env:
+          MARQUEE_STORE_PASSWORD: ${{ secrets.MARQUEE_STORE_PASSWORD }}
+          MARQUEE_KEY_PASSWORD: ${{ secrets.MARQUEE_KEY_PASSWORD }}
+        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} doesn't match versionName $v"; exit 1; }
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "marquee-${GITHUB_REF_NAME}.apk"
+          gh release create "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --title "Marquee ${GITHUB_REF_NAME#v}" --generate-notes

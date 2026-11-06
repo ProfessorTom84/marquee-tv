@@ -1,0 +1,6 @@
+-keep class fi.iki.elonen.** { *; }
+-dontwarn org.slf4j.**
+-keepattributes *Annotation*, InnerClasses
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class app.marquee.tv.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class app.marquee.tv.**$$serializer { *; }

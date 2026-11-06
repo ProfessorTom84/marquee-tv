@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Marquee</string>
+    <string name="accessibility_label">Marquee home button and alerts</string>
+    <string name="accessibility_description">Lets Marquee open when you press Home, open your preferred YouTube app instead of YouTube, and show time-to-leave alerts over other apps. Marquee does not read screen content.</string>
+    <string name="dream_label">Marquee Ambient</string>
+</resources>

@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+# Never commit the signing key: it lives in the MARQUEE_KEYSTORE_B64 repository secret.
+*.jks
+*.keystore
