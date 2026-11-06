@@ -74,6 +74,19 @@ class SetupServer(
             }.getOrElse { "ERROR ${it.message}" }
             return newFixedLengthResponse(Response.Status.OK, "text/plain; charset=utf-8", body)
         }
+        // Version and update status, for checking a TV remotely.
+        if (session.uri.endsWith("/status")) {
+            val ctx = app.marquee.tv.MarqueeApp.instance
+            val (ver, code) = app.marquee.tv.system.Updater.currentVersion(ctx)
+            val u = app.marquee.tv.system.Updater.state.value
+            val body = kotlinx.serialization.json.buildJsonObject {
+                put("version", kotlinx.serialization.json.JsonPrimitive(ver)); put("versionCode", kotlinx.serialization.json.JsonPrimitive(code))
+                put("update", kotlinx.serialization.json.JsonPrimitive(u.phase.name)); put("latest", kotlinx.serialization.json.JsonPrimitive(u.latest ?: ""))
+                put("message", kotlinx.serialization.json.JsonPrimitive(u.message)); put("repo", kotlinx.serialization.json.JsonPrimitive(store.value.updateRepo))
+                put("hasToken", kotlinx.serialization.json.JsonPrimitive(store.value.updateToken.isNotBlank()))
+            }
+            return newFixedLengthResponse(Response.Status.OK, "application/json", body.toString())
+        }
         // Copy this TV's setup to another Marquee TV (both behind each TV's own setup code).
         if (session.uri.endsWith("/export")) return newFixedLengthResponse(Response.Status.OK, "application/json", store.exportJson())
         if (session.uri.endsWith("/import") && session.method == Method.POST) {

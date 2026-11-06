@@ -32,10 +32,12 @@ import java.io.File
  * while the TV is idle (screen off or screensaver). Nothing installs while you're watching.
  */
 object Updater {
+    private val scope0 = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     enum class Phase { NOT_SET_UP, IDLE, CHECKING, UP_TO_DATE, DOWNLOADING, READY, INSTALLING, ERROR }
     data class State(val phase: Phase = Phase.IDLE, val latest: String? = null, val notes: String = "", val message: String = "", val checkedAt: Long = 0)
 
     val state = MutableStateFlow(State())
+        .also { f -> scope0.launch { f.collect { st -> android.util.Log.i("MarqueeUpdate", "${st.phase}: ${st.message}") } } }
     private var ready: File? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var started = false
