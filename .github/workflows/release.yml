@@ -30,6 +30,7 @@ jobs:
         env:
           MARQUEE_STORE_PASSWORD: ${{ secrets.MARQUEE_STORE_PASSWORD }}
           MARQUEE_KEY_PASSWORD: ${{ secrets.MARQUEE_KEY_PASSWORD }}
+          MARQUEE_UPDATE_TOKEN: ${{ secrets.MARQUEE_UPDATE_TOKEN }}
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
 
       - name: Check the tag matches the app version

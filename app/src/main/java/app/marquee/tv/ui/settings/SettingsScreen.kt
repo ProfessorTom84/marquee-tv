@@ -223,7 +223,10 @@ private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
     Group {
         ValueRow("This version", version, onClick = {})
         ValueRow("Update source", s.updateRepo.ifBlank { "Not set up" },
-            sub = if (s.updateRepo.isBlank()) "Add the repo and a read-only token on the phone setup page (Accounts & setup)" else if (s.updateToken.isBlank()) "No token yet: add one on the phone setup page" else "Token saved",
+            sub = if (s.updateRepo.isBlank()) "Add the repo on the phone setup page (Accounts & setup)"
+                else if (s.updateToken.isNotBlank()) "Using the token saved on this TV"
+                else if (app.marquee.tv.BuildConfig.UPDATE_TOKEN.isNotBlank()) "Using the built-in read-only token"
+                else "No token yet: add one on the phone setup page",
             onClick = {})
         Toggle(s.autoUpdate, "Update automatically", "Check every few hours and install while the TV is idle", { vm.app.store.update { it.copy(autoUpdate = !it.autoUpdate) } })
         Text(st.message.ifBlank { "Not checked yet" }, style = T.sans(12.sp, FontWeight.SemiBold, if (st.phase == app.marquee.tv.system.Updater.Phase.ERROR) C.Warn else C.AmberSoft), modifier = Modifier.padding(vertical = 4.dp))

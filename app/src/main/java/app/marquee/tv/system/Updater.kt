@@ -9,6 +9,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import app.marquee.tv.BuildConfig
 import app.marquee.tv.MarqueeApp
 import app.marquee.tv.net.Http
 import app.marquee.tv.net.arr
@@ -68,6 +69,7 @@ object Updater {
     /** Asks GitHub for the newest release; optionally downloads it and installs right away if the TV is idle. */
     suspend fun check(app: MarqueeApp, download: Boolean = true) {
         val s = app.store.value
+        val token = s.updateToken.ifBlank { BuildConfig.UPDATE_TOKEN }
         if (s.updateRepo.isBlank()) { state.value = State(Phase.NOT_SET_UP, message = "Add the GitHub repo and token on the phone setup page"); return }
         if (state.value.phase == Phase.DOWNLOADING || state.value.phase == Phase.INSTALLING) return
         state.value = state.value.copy(phase = Phase.CHECKING, message = "Checking GitHub…")
@@ -75,7 +77,7 @@ object Updater {
             val headers = buildMap {
                 put("Accept", "application/vnd.github+json")
                 put("X-GitHub-Api-Version", "2022-11-28")
-                if (s.updateToken.isNotBlank()) put("Authorization", "Bearer ${s.updateToken}")
+                if (token.isNotBlank()) put("Authorization", "Bearer $token")
             }
             val body = Http.getText("https://api.github.com/repos/${s.updateRepo}/releases/latest", headers, cacheMinutes = 0)
             val j = Json.parseToJsonElement(body)
@@ -94,7 +96,7 @@ object Updater {
             val dir = File(app.filesDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
             val file = File(dir, "marquee-$latest.apk")
             val req = okhttp3.Request.Builder().url("https://api.github.com/repos/${s.updateRepo}/releases/assets/${asset["id"].long}")
-                .header("Accept", "application/octet-stream").apply { if (s.updateToken.isNotBlank()) header("Authorization", "Bearer ${s.updateToken}") }.build()
+                .header("Accept", "application/octet-stream").apply { if (token.isNotBlank()) header("Authorization", "Bearer $token") }.build()
             Http.client.newCall(req).execute().use { r ->
                 if (!r.isSuccessful) error("Download failed (HTTP ${r.code})")
                 file.outputStream().use { out -> r.body!!.byteStream().copyTo(out) }
