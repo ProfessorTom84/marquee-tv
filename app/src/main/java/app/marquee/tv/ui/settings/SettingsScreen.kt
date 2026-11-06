@@ -135,14 +135,15 @@ fun SettingsScreen(vm: MarqueeVm, nav: Nav, initial: String) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
 }
 
-private fun next(st: HomeStyle) = HomeStyle.entries[(st.ordinal + 1) % HomeStyle.entries.size]
+private val pickable = HomeStyle.entries.filter { it != HomeStyle.AMBIENT }
+private fun next(st: HomeStyle) = pickable[(pickable.indexOf(st) + 1).mod(pickable.size)]
 
 @Composable
 private fun StyleSection(vm: MarqueeVm, s: Settings) {
     val store = vm.app.store
     H("Home style", "Choose how your home screen looks. Profiles can override this.")
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-        HomeStyle.entries.forEach { st ->
+        pickable.forEach { st ->
             Focusable(Modifier.width(190.dp), onClick = {
                 // Picking a style means "show me this": it wins over the time-of-day schedule and the profile's own style.
                 store.update { cur ->
@@ -280,7 +281,7 @@ private fun ProfilesSection(vm: MarqueeVm, s: Settings) {
                 if (p.style == "AUTO") "Automatic" else HomeStyle.valueOf(p.style).label,
                 sub = if (p.kidSafe) "Kid-safe" else "",
                 onClick = {
-                    val order = listOf("AUTO") + HomeStyle.entries.map { it.name }
+                    val order = listOf("AUTO") + pickable.map { it.name }
                     store.update { st -> st.copy(profiles = st.profiles.toMutableList().also { l -> l[i] = p.copy(style = order[(order.indexOf(p.style) + 1) % order.size]) }) }
                 },
                 modifier = Modifier.weight(1f),

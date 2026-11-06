@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
+/** Home styles you can choose. AMBIENT is only the idle/clock screen (any button closes it), never a pickable style. */
 enum class HomeStyle(val label: String, val blurb: String) {
     DASHBOARD("Dashboard", "Weather, calendar and stats up top, picks below"),
     CINEMATIC("Cinematic", "One title fills the screen, trailers play behind it"),
@@ -152,7 +153,8 @@ class SettingsStore(context: Context) {
 
     private fun load(): Settings {
         fun s(k: String) = sp.getString(k, "") ?: ""
-        fun style(k: String, d: HomeStyle) = runCatching { HomeStyle.valueOf(s(k)) }.getOrDefault(d)
+        // Ambient is no longer a home style you can pick (it had no way out): stored Ambient becomes the default.
+        fun style(k: String, d: HomeStyle) = runCatching { HomeStyle.valueOf(s(k)) }.getOrDefault(d).let { if (it == HomeStyle.AMBIENT) d else it }
         val d = Settings()
         return Settings(
             homeStyle = style("homeStyle", d.homeStyle),

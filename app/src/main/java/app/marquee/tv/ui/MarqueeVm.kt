@@ -234,13 +234,15 @@ class MarqueeVm : ViewModel() {
         val s = settings.value
         if (ambientActive.value) return HomeStyle.AMBIENT
         val p = s.profile
-        if (p.style != "AUTO") return runCatching { HomeStyle.valueOf(p.style) }.getOrDefault(s.homeStyle)
-        if (!s.autoSwitch) return s.homeStyle
+        // Ambient only ever appears as the idle screen (any button closes it), never as a chosen style.
+        fun pick(x: HomeStyle) = if (x == HomeStyle.AMBIENT) HomeStyle.DASHBOARD else x
+        if (p.style != "AUTO") return pick(runCatching { HomeStyle.valueOf(p.style) }.getOrDefault(s.homeStyle))
+        if (!s.autoSwitch) return pick(s.homeStyle)
         val h = LocalTime.now().hour
         return when (h) {
-            in 5..11 -> s.morningStyle
-            in 17..23, in 0..3 -> s.eveningStyle
-            else -> s.homeStyle
+            in 5..11 -> pick(s.morningStyle)
+            in 17..23, in 0..3 -> pick(s.eveningStyle)
+            else -> pick(s.homeStyle)
         }
     }
 
