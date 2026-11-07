@@ -35,7 +35,10 @@ import java.io.File
 object Updater {
     private val scope0 = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     enum class Phase { NOT_SET_UP, IDLE, CHECKING, UP_TO_DATE, DOWNLOADING, READY, INSTALLING, ERROR }
-    data class State(val phase: Phase = Phase.IDLE, val latest: String? = null, val notes: String = "", val message: String = "", val checkedAt: Long = 0)
+    data class State(
+        val phase: Phase = Phase.IDLE, val latest: String? = null, val notes: String = "", val message: String = "", val checkedAt: Long = 0,
+        val since: Long = System.currentTimeMillis(), // when this phase began, to spot a download or install that never finished
+    )
 
     val state = MutableStateFlow(State())
         .also { f -> scope0.launch { f.collect { st -> android.util.Log.i("MarqueeUpdate", "${st.phase}: ${st.message}") } } }
@@ -55,7 +58,11 @@ object Updater {
         scope.launch {
             delay(90_000)
             while (true) {
-                if (app.store.value.autoUpdate) runCatching { check(app, download = true) }
+                if (app.store.value.autoUpdate && checking?.isActive != true) {
+                    // Recorded like "Check now", so the button knows a check is already running.
+                    checking = scope.launch { runCatching { check(app, download = true) } }
+                    checking?.join()
+                }
                 delay(6 * 60 * 60_000L)
             }
         }
@@ -66,13 +73,36 @@ object Updater {
         return (p.versionName ?: "0") to p.longVersionCode
     }
 
+    @Volatile private var checking: kotlinx.coroutines.Job? = null
+
+    /**
+     * The "Check now" button. Runs on the updater's own background scope, so leaving the Settings page
+     * doesn't cancel it, and always says what happened, even when a check or download is already under way.
+     */
+    fun checkNow(app: MarqueeApp) {
+        val st = state.value
+        val busy = st.phase == Phase.CHECKING || st.phase == Phase.DOWNLOADING || st.phase == Phase.INSTALLING
+        // A download or install that hasn't moved in five minutes is stuck: start over rather than ignore the button.
+        if (busy && checking?.isActive == true && System.currentTimeMillis() - st.since < 5 * 60_000L) {
+            state.value = st.copy(message = st.message.substringBefore(" (already") + " (already working on it)")
+            return
+        }
+        if (busy) { checking?.cancel(); state.value = st.copy(phase = Phase.IDLE) }
+        checking = scope.launch { check(app, download = true) }
+    }
+
     /** Asks GitHub for the newest release; optionally downloads it and installs right away if the TV is idle. */
-    suspend fun check(app: MarqueeApp, download: Boolean = true) {
+    suspend fun check(app: MarqueeApp, download: Boolean = true) = kotlinx.coroutines.withContext(Dispatchers.IO) { checkInternal(app, download) }
+
+    private fun at(t: Long) = java.time.format.DateTimeFormatter.ofPattern("h:mm a").format(java.time.LocalTime.ofInstant(java.time.Instant.ofEpochMilli(t), java.time.ZoneId.systemDefault()))
+
+    // Always on a background thread (see [check]): it downloads and writes the APK with blocking calls.
+    private suspend fun checkInternal(app: MarqueeApp, download: Boolean) {
         val s = app.store.value
         val token = s.updateToken.ifBlank { BuildConfig.UPDATE_TOKEN }
         if (s.updateRepo.isBlank()) { state.value = State(Phase.NOT_SET_UP, message = "Add the GitHub repo and token on the phone setup page"); return }
         if (state.value.phase == Phase.DOWNLOADING || state.value.phase == Phase.INSTALLING) return
-        state.value = state.value.copy(phase = Phase.CHECKING, message = "Checking GitHub…")
+        state.value = state.value.copy(phase = Phase.CHECKING, message = "Checking GitHub…", since = System.currentTimeMillis())
         try {
             val headers = buildMap {
                 put("Accept", "application/vnd.github+json")
@@ -87,12 +117,13 @@ object Updater {
             val latest = tag.removePrefix("v")
             val (cur, _) = currentVersion(app)
             if (!newer(latest, cur)) {
-                state.value = State(Phase.UP_TO_DATE, latest, notes, "You're on the latest version ($cur)", System.currentTimeMillis())
+                val now = System.currentTimeMillis()
+                state.value = State(Phase.UP_TO_DATE, latest, notes, "You're on the latest version ($cur) · checked at ${at(now)}", now)
                 return
             }
             state.value = State(Phase.IDLE, latest, notes, "Version $latest is available", System.currentTimeMillis())
             if (!download) return
-            state.value = state.value.copy(phase = Phase.DOWNLOADING, message = "Downloading $latest…")
+            state.value = state.value.copy(phase = Phase.DOWNLOADING, message = "Downloading $latest…", since = System.currentTimeMillis())
             val dir = File(app.filesDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
             val file = File(dir, "marquee-$latest.apk")
             val req = okhttp3.Request.Builder().url("https://api.github.com/repos/${s.updateRepo}/releases/assets/${asset["id"].long}")
@@ -103,11 +134,15 @@ object Updater {
             }
             verify(app, file)
             ready = file
-            state.value = state.value.copy(phase = Phase.READY, message = "Version $latest is ready. It installs when the TV is idle.")
+            state.value = state.value.copy(phase = Phase.READY, message = "Version $latest is ready. Install now, or it installs when the TV is idle.")
             val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isInteractive && s.autoUpdate) install(app)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            state.value = state.value.copy(phase = Phase.IDLE, message = "Check stopped. Try again.")
+            throw e
         } catch (e: Exception) {
-            state.value = state.value.copy(phase = Phase.ERROR, message = friendly(e), checkedAt = System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            state.value = state.value.copy(phase = Phase.ERROR, message = "${friendly(e)} (at ${at(now)})", checkedAt = now)
         }
     }
 
@@ -125,7 +160,7 @@ object Updater {
     fun install(app: MarqueeApp) {
         val file = ready ?: return
         if (state.value.phase == Phase.INSTALLING) return
-        state.value = state.value.copy(phase = Phase.INSTALLING, message = "Installing…")
+        state.value = state.value.copy(phase = Phase.INSTALLING, message = "Installing…", since = System.currentTimeMillis())
         scope.launch {
             try {
                 val installer = app.packageManager.packageInstaller
@@ -167,6 +202,7 @@ object Updater {
     private fun friendly(e: Exception): String {
         val m = e.message ?: e.javaClass.simpleName
         return when {
+            e is java.net.UnknownHostException || e is java.net.SocketTimeoutException || e is java.net.ConnectException -> "Couldn't reach GitHub. Check the TV's internet connection."
             m.contains("401") || m.contains("403") -> "GitHub refused the token. Check it on the phone setup page."
             m.contains("404") -> "Repo or release not found. Check the repo name and that the token can read it."
             else -> m

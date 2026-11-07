@@ -222,7 +222,6 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
 @Composable
 private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
     val st by app.marquee.tv.system.Updater.state.collectAsState()
-    val scope = rememberCoroutineScope()
     val (version, _) = remember { app.marquee.tv.system.Updater.currentVersion(vm.app) }
     H("Updates", "Marquee updates itself from your private GitHub repo. New versions download in the background and install while the TV is idle (screen off or screensaver), never while you're watching.")
     Group {
@@ -237,7 +236,8 @@ private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
         Text(st.message.ifBlank { "Not checked yet" }, style = T.sans(12.sp, FontWeight.SemiBold, if (st.phase == app.marquee.tv.system.Updater.Phase.ERROR) C.Warn else C.AmberSoft), modifier = Modifier.padding(vertical = 4.dp))
         if (st.notes.isNotBlank() && st.latest != null) Text("What's new in ${st.latest}: ${st.notes}", style = T.small, maxLines = 6)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PillButton("Check now", height = 34.dp) { scope.launch { app.marquee.tv.system.Updater.check(vm.app, download = true) } }
+            val working = st.phase == app.marquee.tv.system.Updater.Phase.CHECKING || st.phase == app.marquee.tv.system.Updater.Phase.DOWNLOADING
+            PillButton(if (working) "Checking…" else "Check now", height = 34.dp) { app.marquee.tv.system.Updater.checkNow(vm.app) }
             if (st.phase == app.marquee.tv.system.Updater.Phase.READY) PillButton("Install now", primary = true, height = 34.dp) { app.marquee.tv.system.Updater.install(vm.app) }
         }
     }
