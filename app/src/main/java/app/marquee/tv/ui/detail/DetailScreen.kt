@@ -107,6 +107,7 @@ fun DetailScreen(vm: MarqueeVm, nav: Nav, initial: Title) {
         // As you scroll into the rows, the art dims so they read cleanly.
         Box(Modifier.fillMaxSize().graphicsLayer {
             alpha = if (list.firstVisibleItemIndex > 0) 1f else (list.firstVisibleItemScrollOffset / 300f).coerceIn(0f, 1f)
+            compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
         }.background(Color(0xCC07060B)))
 
         CalmScroll {

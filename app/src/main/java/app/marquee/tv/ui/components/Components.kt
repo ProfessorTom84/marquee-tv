@@ -350,6 +350,10 @@ fun TitleCard(
     // and fall back to the poster if a thumbnail is missing (YouTube has no max-res thumbnail for some videos).
     val primary = remember(title.id, title.backdropUrl, title.posterUrl) { cardImageUrl(title.backdropUrl ?: title.posterUrl) }
     val fallback = remember(title.id) { fallbackBrush(title.id) }
+    // The placeholder gradient is hidden once the artwork has faded in, so stop painting it: one less full-card
+    // fill per card per frame. (After the 350 ms crossfade, so the sky never shows through mid-fade.)
+    var artLoaded by remember(title.id) { mutableStateOf(false) }
+    val hideFallback by androidx.compose.runtime.produceState(false, artLoaded) { if (artLoaded) { kotlinx.coroutines.delay(400); value = true } }
 
     // Where the artwork sits on screen, so a click can grow it into the details page (no recomposition: a plain holder).
     val where = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
@@ -375,12 +379,18 @@ fun TitleCard(
                         rotationY = tilt; rotationX = if (f) 2.5f else 0f
                         cameraDistance = 14f * density
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.3f, 0.5f)
-                        this.alpha = alpha
                     }
                     // Only the focused card casts a (coloured) shadow; twenty resting shadows cost real GPU time on a TV.
                     .then(if (f) Modifier.shadow(18.dp, shape, ambientColor = glow ?: C.Amber, spotColor = glow ?: C.Amber) else Modifier)
                     .clip(shape)
-                    .background(fallback)
+                    // Resting cards are dimmed with a dark veil, not layer alpha: alpha below 1 renders every card into
+                    // its own offscreen buffer, and two dozen of those per frame is what made scrolling choppy on the TV.
+                    .drawWithContent {
+                        drawContent()
+                        val veil = 1f - alpha
+                        if (veil > 0.004f) drawRect(Color.Black.copy(alpha = veil))
+                    }
+                    .then(if (hideFallback) Modifier else Modifier.background(fallback))
                     .then(if (f) Modifier.border(2.dp, Color(0xF2FFF0DC), shape) else Modifier),
             ) {
                 var imgFailed by remember(title.id) { mutableStateOf(false) }
@@ -390,6 +400,7 @@ fun TitleCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                     onError = { if (!imgFailed && title.posterUrl != null && title.posterUrl != primary) imgFailed = true },
+                    onSuccess = { artLoaded = true },
                 )
                 Box(Modifier.fillMaxSize().background(CardShade))
                 var logoFailed by remember(title.logoUrl) { mutableStateOf(false) }

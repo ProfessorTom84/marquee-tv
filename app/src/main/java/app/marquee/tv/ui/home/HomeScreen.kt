@@ -160,6 +160,8 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                     // The top bar fades away as you scroll into the rows (read in the draw phase: no recomposition).
                     Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp).graphicsLayer {
                         alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 160f).coerceIn(0f, 1f)
+                        // Fade each glyph/shape directly instead of via an offscreen buffer (cheaper on the TV's GPU).
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                     }, verticalAlignment = Alignment.CenterVertically) {
                         DashboardClock(s.profile.name, weather?.summary)
                         Spacer(Modifier.weight(1f))
