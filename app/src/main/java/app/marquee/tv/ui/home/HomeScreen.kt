@@ -107,6 +107,18 @@ fun HomeScreen(vm: MarqueeVm, nav: Nav) {
     }
 }
 
+/**
+ * The home screen's up-and-down list keeps a screen's worth of rows built above and below what you can see.
+ * Measured on the Google TV Streamer, building a row as it scrolled into view (and rebuilding rows you'd
+ * scrolled past) cost 35–55 ms of a 16 ms frame, two or three times a second: the hitches while scrolling.
+ * With a cache window, upcoming rows are built ahead in spare time, a little per frame, and recent ones are kept.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun rememberHomeListState() = androidx.compose.foundation.lazy.rememberLazyListState(
+    cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 1f),
+)
+
 private fun cycleProfile(vm: MarqueeVm) = vm.app.store.update { it.copy(activeProfile = (it.activeProfile + 1) % it.profiles.size) }
 
 private fun openTitle(nav: Nav, vm: MarqueeVm, t: Title) {
@@ -132,7 +144,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     // One calm background for everything: it never changes with the card you're on.
     val focusedId = remember { mutableStateOf<String?>(null) }
     val onFocus: (Title) -> Unit = remember { { t -> focusedId.value = t.id } }
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val listState = rememberHomeListState()
     var resetTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Scroll up, refocus the first card, then settle at the very top again (focusing nudges the list).
@@ -404,7 +416,7 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
     // never recomposes this whole screen.
     val focusState = remember { mutableStateOf<Title?>(null) }
     val onFocus: (Title) -> Unit = remember { { t -> focusState.value = t } }
-    val cineList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val cineList = rememberHomeListState()
     var cineReset by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val cineScope = androidx.compose.runtime.rememberCoroutineScope()
     fun cineTop() { cineReset++; focusState.value = null; cineScope.launch { cineList.scrollToItem(0); delay(320); cineList.animateScrollToItem(0) } }

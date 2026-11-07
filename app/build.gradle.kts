@@ -17,8 +17,8 @@ android {
         buildConfigField("String", "UPDATE_TOKEN", "\"${System.getenv("MARQUEE_UPDATE_TOKEN") ?: ""}\"")
         minSdk = 31
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.14.1"
+        versionCode = 31
+        versionName = "0.14.2"
     }
 
     signingConfigs {
@@ -48,7 +48,7 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2025.06.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
@@ -76,4 +76,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")
     testImplementation("junit:junit:4.13.2")
+}
+
+// Release builds (the GitHub workflow) pass -Pmarquee.skipScreenshots: the screenshot tests render whole screens in a
+// simulated Android display, which is slow and doesn't gate a release; the logic tests still run.
+if (project.hasProperty("marquee.skipScreenshots")) {
+    tasks.withType<Test>().configureEach { filter { excludeTestsMatching("*ScreenshotTest*") } }
 }

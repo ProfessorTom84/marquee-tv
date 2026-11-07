@@ -62,7 +62,9 @@ jobs:
           MARQUEE_STORE_PASSWORD: ${{ secrets.MARQUEE_STORE_PASSWORD }}
           MARQUEE_KEY_PASSWORD: ${{ secrets.MARQUEE_KEY_PASSWORD }}
           MARQUEE_UPDATE_TOKEN: ${{ secrets.MARQUEE_UPDATE_TOKEN }}
-        run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
+        # Tests run against the release build, so the app is compiled once rather than twice (debug + release);
+        # the slow screenshot tests are left out of releases. Gradle's build cache reuses unchanged work.
+        run: ./gradlew :app:testReleaseUnitTest :app:assembleRelease -Pmarquee.skipScreenshots --no-daemon
 
       - name: Publish release
         if: steps.v.outputs.go == 'true'
