@@ -20,6 +20,7 @@ import app.marquee.tv.ui.components.CardPreview
 import app.marquee.tv.system.HealthChecks
 import app.marquee.tv.system.Check
 import app.marquee.tv.recs.Recommender
+import app.marquee.tv.recs.FeedLayout
 import app.marquee.tv.stats.WeekStats
 import app.marquee.tv.system.TvApp
 import app.marquee.tv.system.UpNext
@@ -52,7 +53,8 @@ class MarqueeVm : ViewModel() {
 
     private var homeJob: Job? = null
 
-    private val cacheFile = java.io.File(app.filesDir, "home-v2.json")
+    // v3: the merged "From your Plex" row, per-service rows and the feed balance.
+    private val cacheFile = java.io.File(app.filesDir, "home-v3.json")
 
     /** Drops anything not on your Plex, your chosen services or YouTube, and any duplicate keys. */
     private fun sanitize(h: HomeData, services: Set<Int>): HomeData {
@@ -64,17 +66,33 @@ class MarqueeVm : ViewModel() {
         return h.copy(featured = h.featured?.takeIf(::allowed), rows = rows)
     }
 
+    private var lastServices = settings.value.services
+    private var lastProfile = settings.value.activeProfile
+    private var lastBalance = settings.value.feedBalance
+
+    // (Declared before init: init reads them.)
+    // ---- Freshness: every time you come back to the TV's home screen, it should feel new ----
+    private var homeBase: HomeData? = null
+    private var lastHomeLoad = 0L
+    private var visits = 0
+    @Volatile private var lastKeyAt = 0L
+
     init {
         // Show the last home screen instantly, then refresh in the background.
-        runCatching { java.io.File(app.filesDir, "home.json").delete() }
-        runCatching { home.value = sanitize(Http.json.decodeFromString(HomeData.serializer(), cacheFile.readText()), settings.value.services) }
+        listOf("home.json", "home-v2.json").forEach { runCatching { java.io.File(app.filesDir, it).delete() } }
+        runCatching {
+            homeBase = sanitize(Http.json.decodeFromString(HomeData.serializer(), cacheFile.readText()), settings.value.services)
+            home.value = freshen(homeBase!!, visits)
+        }
         refreshAll()
         viewModelScope.launch { app.refreshTick.drop(1).collect { refreshAll(); checkHealth() } }
         viewModelScope.launch {
             settings.drop(1).collect { s ->
                 // Removing a service takes effect at once; the full refresh follows.
-                if (s.services != lastServices) home.value?.let { home.value = sanitize(it, s.services) }
-                if (s.services != lastServices || s.activeProfile != lastProfile) refreshHome()
+                if (s.services != lastServices) homeBase?.let { homeBase = sanitize(it, s.services); home.value = freshen(homeBase!!, visits) }
+                // A new feed balance re-arranges the rows at once; the refresh then re-mixes "For you" and the rows.
+                if (s.feedBalance != lastBalance) homeBase?.let { home.value = freshen(it, visits) }
+                if (s.services != lastServices || s.activeProfile != lastProfile || s.feedBalance != lastBalance) refreshHome()
             }
         }
         // Light refresh loop: clock-driven data every minute, heavy data every 20 minutes.
@@ -92,14 +110,6 @@ class MarqueeVm : ViewModel() {
         }
     }
 
-    private var lastServices = settings.value.services
-    private var lastProfile = settings.value.activeProfile
-
-    // ---- Freshness: every time you come back to the TV's home screen, it should feel new ----
-    private var homeBase: HomeData? = null
-    private var lastHomeLoad = 0L
-    private var visits = 0
-    @Volatile private var lastKeyAt = 0L
 
     /** Called on each D-pad press, so a background refresh never rearranges rows under you. */
     fun onKey() { lastKeyAt = System.currentTimeMillis() }
@@ -115,17 +125,13 @@ class MarqueeVm : ViewModel() {
     }
 
     /**
-     * Same picks, new arrangement: "For you" starts from a different card each visit, and the rows below
-     * (Plex hubs, seasonal ribbons, trending…) take turns being near the top. Continue watching stays put.
+     * Same picks, new arrangement: which two or three services get a row, which "Because you watched…" and
+     * mood rows show, and where "For you" and "From your Plex" start all move on each visit (and each hour),
+     * so the feed changes through the day. Plex never gets more than two rows.
      */
     private fun freshen(h: HomeData, visit: Int): HomeData {
-        if (visit == 0) return h
-        fun <T> List<T>.rotated(by: Int) = if (isEmpty()) this else (by % size).let { k -> drop(k) + take(k) }
-        val fixed = setOf("continue", "tonight", "youtube")
-        val rows = h.rows.map { r -> if (r.key == "tonight") r.copy(items = r.items.rotated(visit * 3)) else r }
-        val rotating = rows.filter { it.key !in fixed }.rotated(visit)
-        var ri = 0
-        return h.copy(rows = rows.map { r -> if (r.key in fixed) r else rotating[ri++] })
+        val turn = visit + (System.currentTimeMillis() / 3_600_000L).toInt()
+        return h.copy(rows = FeedLayout.arrange(h.rows, settings.value.feedBalance, turn, visit))
     }
 
     fun refreshAll() {
@@ -133,7 +139,7 @@ class MarqueeVm : ViewModel() {
     }
 
     fun refreshHome() {
-        lastServices = settings.value.services; lastProfile = settings.value.activeProfile
+        lastServices = settings.value.services; lastProfile = settings.value.activeProfile; lastBalance = settings.value.feedBalance
         homeJob?.cancel()
         homeJob = viewModelScope.launch {
             loading.value = home.value == null

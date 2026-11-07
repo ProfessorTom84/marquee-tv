@@ -260,6 +260,11 @@ fun SectionHeader(title: String, subtitle: String = "", modifier: Modifier = Mod
     }
 }
 
+/** Card-sized artwork: TMDB's w780 instead of w1280, and Plex's transcoder at 640×360 instead of full HD. */
+fun cardImageUrl(url: String?): String? = url
+    ?.replace("/t/p/w1280/", "/t/p/w780/")
+    ?.replace("width=1920&height=1080", "width=640&height=360")
+
 /** Deterministic fallback art so cards never look empty. */
 fun fallbackBrush(seed: String): Brush {
     val palettes = listOf(
@@ -341,6 +346,10 @@ fun TitleCard(
     val context = LocalContext.current
     var glow by remember(title.id) { mutableStateOf<Color?>(null) }
     val loader = remember { coil.Coil.imageLoader(context) }
+    // Cards are small: ask for card-sized artwork (TMDB w780, Plex transcoded to 640×360, not 1920×1080),
+    // and fall back to the poster if a thumbnail is missing (YouTube has no max-res thumbnail for some videos).
+    val primary = remember(title.id, title.backdropUrl, title.posterUrl) { cardImageUrl(title.backdropUrl ?: title.posterUrl) }
+    val fallback = remember(title.id) { fallbackBrush(title.id) }
 
     // Where the artwork sits on screen, so a click can grow it into the details page (no recomposition: a plain holder).
     val where = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
@@ -349,8 +358,9 @@ fun TitleCard(
             where[0]?.takeIf { it.isAttached }?.boundsInRoot())
         onClick(title)
     }, onFocus = { if (it) onFocus(title) }) { f ->
-        // Only work out the glow colour for the card you're on, not every card on screen.
-        androidx.compose.runtime.LaunchedEffect(f, title.id) { if (f && glow == null) glow = dominantColor(context, loader, title.backdropUrl ?: title.posterUrl) }
+        // Only work out the glow colour for the card you're on, not every card on screen (from the card-sized image
+        // that's already cached, rather than downloading the full-size artwork again).
+        if (f && glow == null) androidx.compose.runtime.LaunchedEffect(title.id) { glow = dominantColor(context, loader, primary) }
         val lift by animateFloatAsState(if (f) 1.08f else 1f, spring(dampingRatio = 0.7f, stiffness = 380f), label = "lift")
         val tilt by animateFloatAsState(if (f) -6f else 0f, tween(420, easing = FastOutSlowInEasing), label = "tilt")
         val alpha by animateFloatAsState(if (f) 1f else if (dimmed) 0.65f else 0.88f, label = "a")
@@ -370,12 +380,9 @@ fun TitleCard(
                     // Only the focused card casts a (coloured) shadow; twenty resting shadows cost real GPU time on a TV.
                     .then(if (f) Modifier.shadow(18.dp, shape, ambientColor = glow ?: C.Amber, spotColor = glow ?: C.Amber) else Modifier)
                     .clip(shape)
-                    .background(fallbackBrush(title.id))
+                    .background(fallback)
                     .then(if (f) Modifier.border(2.dp, Color(0xF2FFF0DC), shape) else Modifier),
             ) {
-                // Cards are small: ask for a smaller TMDB size, and fall back to the poster if a thumbnail is missing
-                // (YouTube has no max-res thumbnail for some videos).
-                val primary = remember(title.id) { (title.backdropUrl ?: title.posterUrl)?.replace("/t/p/w1280/", "/t/p/w780/") }
                 var imgFailed by remember(title.id) { mutableStateOf(false) }
                 AsyncImage(
                     model = if (imgFailed) title.posterUrl else primary,
@@ -448,6 +455,7 @@ fun BoxScope.Sheen() {
     )
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MediaRow(
     items: List<Title>,
@@ -461,7 +469,12 @@ fun MediaRow(
     resetKey: Any? = null, // when this changes the row scrolls back to its first card (and refocuses it if initialFocus)
 ) {
     val first = remember { androidx.compose.ui.focus.FocusRequester() }
-    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // While the page scrolls, the next row's first screenful of cards is composed ahead of time (nested
+    // prefetch), so a row coming into view doesn't have to build five cards in one frame.
+    // (The strategy keeps per-list state, so each row gets its own.)
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState(
+        prefetchStrategy = remember { androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 5) },
+    )
     // Duplicate keys crash a lazy row, so never trust the data to be unique.
     val unique = remember(items) { items.distinctBy { it.id } }
     // Focus the first card once, when the screen first appears. (Lazy lists rebuild a row when it scrolls back

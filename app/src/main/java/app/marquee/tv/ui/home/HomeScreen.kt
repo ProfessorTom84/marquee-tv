@@ -126,7 +126,6 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     val apps by vm.apps.collectAsState()
     val loading by vm.loading.collectAsState()
     val photo by vm.areaPhoto.collectAsState()
-    val now = rememberNow()
     val preferredYt = remember(s, apps) { vm.app.apps.preferredYouTube(s) }
     val orderedApps = remember(apps, s.services, s.appOrder, s.hiddenApps, preferredYt) { orderedApps(apps, s, preferredYt, vm.app.apps.plexPlayerPackage(s)) }
 
@@ -162,11 +161,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp).graphicsLayer {
                         alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 160f).coerceIn(0f, 1f)
                     }, verticalAlignment = Alignment.CenterVertically) {
-                        Text(clockText(now), style = T.serif(52.sp))
-                        Column(Modifier.padding(start = 14.dp)) {
-                            Text(greeting(now, s.profile.name), style = T.sans(14.sp, FontWeight.SemiBold))
-                            Text(dateText(now) + (weather?.let { " · ${it.summary.lowercase()}" } ?: ""), style = T.sans(10.sp, color = C.Cool))
-                        }
+                        DashboardClock(s.profile.name, weather?.summary)
                         Spacer(Modifier.weight(1f))
                         PillButton("Pick together", icon = { androidx.tv.material3.Icon(app.marquee.tv.ui.components.MarqueeIcons.People, null, modifier = Modifier.size(15.dp)) }, onClick = { nav.go(Screen.PickTogether) })
                         Spacer(Modifier.width(10.dp))
@@ -203,6 +198,17 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                 modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 10.dp),
             )
         }
+    }
+}
+
+/** Clock, greeting and date: the only part of the Dashboard that changes on the minute, so only it recomposes. */
+@Composable
+private fun DashboardClock(profileName: String, summary: String?) {
+    val now = rememberNow()
+    Text(clockText(now), style = T.serif(52.sp))
+    Column(Modifier.padding(start = 14.dp)) {
+        Text(greeting(now, profileName), style = T.sans(14.sp, FontWeight.SemiBold))
+        Text(dateText(now) + (summary?.let { " · ${it.lowercase()}" } ?: ""), style = T.sans(10.sp, color = C.Cool))
     }
 }
 
@@ -392,19 +398,14 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
     val events by vm.events.collectAsState()
     val apps by vm.apps.collectAsState()
     val loading by vm.loading.collectAsState()
-    val now = rememberNow()
-    // Rows write focus here; the hero follows once focus settles, so fast scrolling doesn't relayout it per card.
+    // Rows write focus here; the hero (its own composable) follows once focus settles, so moving between cards
+    // never recomposes this whole screen.
     val focusState = remember { mutableStateOf<Title?>(null) }
     val onFocus: (Title) -> Unit = remember { { t -> focusState.value = t } }
-    var focused by remember { mutableStateOf<Title?>(null) }
-    LaunchedEffect(Unit) {
-        androidx.compose.runtime.snapshotFlow { focusState.value }.collectLatest { t -> if (focused != null) delay(280); focused = t }
-    }
-    val hero = focused ?: home?.featured
     val cineList = androidx.compose.foundation.lazy.rememberLazyListState()
     var cineReset by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val cineScope = androidx.compose.runtime.rememberCoroutineScope()
-    fun cineTop() { cineReset++; focusState.value = null; focused = null; cineScope.launch { cineList.scrollToItem(0); delay(320); cineList.animateScrollToItem(0) } }
+    fun cineTop() { cineReset++; focusState.value = null; cineScope.launch { cineList.scrollToItem(0); delay(320); cineList.animateScrollToItem(0) } }
     LaunchedEffect(Unit) { vm.homeTaps.collect { cineTop() } }
     val cineAway by remember { androidx.compose.runtime.derivedStateOf { cineList.firstVisibleItemIndex > 0 || focusState.value != null && focusState.value?.id != home?.rows?.firstOrNull()?.items?.firstOrNull()?.id } }
     androidx.activity.compose.BackHandler(enabled = cineAway) { cineTop() }
@@ -443,31 +444,12 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
                     Divider()
                 }
                 stats?.let { Text(WatchStats.formatMinutes(it.totalMinutes), style = T.sans(11.sp, FontWeight.Bold)); Text("this week", style = T.sans(11.sp, color = C.TextDim)); Divider() }
-                Text(clockText(now), style = T.serif(20.sp))
+                ClockText(T.serif(20.sp))
                 ProfileButton(s) { cycleProfile(vm) }
             }
         }
 
-        // Hero
-        Column(Modifier.padding(start = 48.dp, top = 108.dp).widthIn(max = 470.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (hero == null) {
-                Text(if (loading) "Finding tonight's picks…" else "Set up Plex and TMDB in Settings to see picks here.", style = T.rowTitle)
-                return@Column
-            }
-            Text(if (focused == null) "${if (java.time.LocalTime.now().hour >= 17 || java.time.LocalTime.now().hour < 4) "TONIGHT'S" else "TODAY'S"} PICK${if (s.profile.name != "Me") " FOR ${s.profile.name.uppercase()}" else ""}" else (hero.reason ?: "SELECTED").uppercase(), style = T.eyebrow)
-            if (hero.logoUrl != null) AsyncImage(hero.logoUrl, hero.title, Modifier.height(86.dp).widthIn(max = 380.dp), contentScale = ContentScale.Fit, alignment = Alignment.CenterStart)
-            else Text(hero.title, style = T.serif(if (hero.title.length > 18) 46.sp else 64.sp, spacing = 1.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            conciergeLine(hero, up, events, weather)?.let { Text(it, style = T.sans(13.sp, FontWeight.Medium, Color(0xFFEFE6DA)), maxLines = 3) }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                RatingChip(hero.ratingLabel)
-                hero.bestAvailability?.quality?.forEach { OutlineTag(it) }
-                Text(
-                    listOfNotNull(hero.year.ifBlank { null }, hero.runtimeMin?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m" },
-                        hero.bestAvailability?.let { Title.availabilityPhrase(it) }).joinToString(" · "),
-                    style = T.sans(10.sp, color = C.TextDim), modifier = Modifier.padding(start = 4.dp),
-                )
-            }
-        }
+        CinematicHero(focusState, home?.featured, loading, s, up, events, weather, cineReset)
 
         // Rows: the first one sits at the bottom of the screen; moving down scrolls the rest into view.
         val rows = home?.rows.orEmpty().distinctBy { it.key }.filter { it.key != "apps" }
@@ -487,6 +469,45 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
                 if (i == 0) item(key = "apps") { AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm) }
             }
             if (rows.isEmpty()) item { AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm) }
+        }
+    }
+}
+
+@Composable
+private fun ClockText(style: androidx.compose.ui.text.TextStyle) {
+    val now = rememberNow()
+    Text(clockText(now), style = style)
+}
+
+/** The big title on the left. Only this recomposes as focus moves between cards. */
+@Composable
+private fun CinematicHero(
+    focusState: androidx.compose.runtime.State<Title?>, featured: Title?, loading: Boolean, s: app.marquee.tv.data.Settings,
+    up: app.marquee.tv.system.UpNext?, events: List<app.marquee.tv.calendar.CalEvent>, weather: app.marquee.tv.weather.Weather?, reset: Int,
+) {
+    var focused by remember { mutableStateOf<Title?>(null) }
+    LaunchedEffect(reset) { if (reset > 0) focused = null }
+    LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { focusState.value }.collectLatest { t -> if (focused != null) delay(280); focused = t }
+    }
+    val hero = focused ?: featured
+    Column(Modifier.padding(start = 48.dp, top = 108.dp).widthIn(max = 470.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (hero == null) {
+            Text(if (loading) "Finding tonight's picks…" else "Set up Plex and TMDB in Settings to see picks here.", style = T.rowTitle)
+            return@Column
+        }
+        Text(if (focused == null) "${if (java.time.LocalTime.now().hour >= 17 || java.time.LocalTime.now().hour < 4) "TONIGHT'S" else "TODAY'S"} PICK${if (s.profile.name != "Me") " FOR ${s.profile.name.uppercase()}" else ""}" else (hero.reason ?: "SELECTED").uppercase(), style = T.eyebrow)
+        if (hero.logoUrl != null) AsyncImage(hero.logoUrl, hero.title, Modifier.height(86.dp).widthIn(max = 380.dp), contentScale = ContentScale.Fit, alignment = Alignment.CenterStart)
+        else Text(hero.title, style = T.serif(if (hero.title.length > 18) 46.sp else 64.sp, spacing = 1.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        conciergeLine(hero, up, events, weather)?.let { Text(it, style = T.sans(13.sp, FontWeight.Medium, Color(0xFFEFE6DA)), maxLines = 3) }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            RatingChip(hero.ratingLabel)
+            hero.bestAvailability?.quality?.forEach { OutlineTag(it) }
+            Text(
+                listOfNotNull(hero.year.ifBlank { null }, hero.runtimeMin?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m" },
+                    hero.bestAvailability?.let { Title.availabilityPhrase(it) }).joinToString(" · "),
+                style = T.sans(10.sp, color = C.TextDim), modifier = Modifier.padding(start = 4.dp),
+            )
         }
     }
 }

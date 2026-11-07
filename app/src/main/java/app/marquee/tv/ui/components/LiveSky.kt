@@ -40,6 +40,7 @@ import app.marquee.tv.weather.Sky
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.Month
@@ -432,6 +433,24 @@ private fun smooth(e0: Float, e1: Float, x: Float): Float { val t = ((x - e0) / 
 /** Tests and previews bake the sky on the spot instead of in the background. */
 object SkyRendering { @Volatile var synchronous = false; @Volatile var stillTime = 37f }
 
+/** One painting of the sky: the base (gradient, stars, sun, scrims) and its cloud textures. */
+private class SkyFrame(val base: ImageBitmap?, val clouds: List<CloudLayer>)
+
+/** Everything a painting depends on. Brushes compare by value, so a re-created scrim still matches. */
+private data class SkyKey(
+    val sky: Sky, val isDay: Boolean?, val sunrise: LocalTime?, val sunset: LocalTime?, val bucket: Int, val date: LocalDate,
+    val latitude: Double, val longitude: Double, val px: IntSize, val overlay: Brush?, val grain: Boolean, val orbs: Boolean, val density: Float,
+)
+
+/** The last few skies painted (main thread only): the home backdrop, the weather card and the Cinematic backdrop. */
+private object SkyCache {
+    private val map = object : LinkedHashMap<SkyKey, SkyFrame>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<SkyKey, SkyFrame>?) = size > 3
+    }
+    operator fun get(k: SkyKey): SkyFrame? = map[k]
+    operator fun set(k: SkyKey, f: SkyFrame) { map[k] = f }
+}
+
 private class Star(val x: Float, val y: Float, val r: Float, val a: Float, val c: Color)
 
 private fun starsFor(seed: Int): List<Star> {
@@ -638,23 +657,26 @@ private fun SkyContent(
 
     // The light is re-painted every couple of minutes (off the main thread) and each new painting cross-fades
     // over the last, so sunset and dusk change continuously rather than in steps.
-    class Frame(val base: ImageBitmap?, val clouds: List<CloudLayer>)
-    val key = remember(px, look, overlay, grain, orbs) { Any() }
-    var current by remember { mutableStateOf<Frame?>(null) }
-    var previous by remember { mutableStateOf<Frame?>(null) }
+    // Paintings are kept in a small cache by what they show, so a sky that leaves the screen (the weather card
+    // scrolling away, or opening a title and coming back) reappears at once instead of being re-painted.
+    val key = SkyKey(weather, isDay, sunrise, sunset, bucket, date, latitude, longitude, px, overlay, grain, orbs, density.density)
+    var current by remember { mutableStateOf<SkyFrame?>(if (inspection) null else SkyCache[key]) }
+    var previous by remember { mutableStateOf<SkyFrame?>(null) }
     var fadeStart by remember { mutableStateOf(0L) }
     if (inspection) {
-        current = remember(key) { Frame(bakeSky(), bakeClouds()) }
+        current = remember(key) { SkyFrame(bakeSky(), bakeClouds()) }
     } else {
         val keyState = androidx.compose.runtime.rememberUpdatedState(key)
         // Always bake with this composition's values (look, size, scrim), not the first one's.
-        val bake = androidx.compose.runtime.rememberUpdatedState { Frame(bakeSky(), bakeClouds()) }
+        val bake = androidx.compose.runtime.rememberUpdatedState { SkyFrame(bakeSky(), bakeClouds()) }
         val fading = animate
         androidx.compose.runtime.LaunchedEffect(Unit) {
-            androidx.compose.runtime.snapshotFlow { keyState.value }.conflate().collect {
-                val work = bake.value
-                val f = withContext(Dispatchers.Default) { work() }
-                if (f.base == null) return@collect
+            androidx.compose.runtime.snapshotFlow { keyState.value }.conflate().collect { k ->
+                val f = SkyCache[k] ?: run {
+                    val work = bake.value
+                    withContext(Dispatchers.Default) { work() }.also { if (it.base != null) SkyCache[k] = it }
+                }
+                if (f.base == null || f === current) return@collect
                 previous = if (fading) current else null
                 fadeStart = System.nanoTime()
                 current = f
@@ -672,9 +694,15 @@ private fun SkyContent(
     val fps = if (lively) 33L else 50L
     val time by produceState(SkyRendering.stillTime, moving) {
         if (!moving) return@produceState
-        val start = withFrameMillis { it }
-        var last = start
-        while (true) withFrameMillis { if (it - last >= fps) { last = it; value = 37f + (it - start) / 1000f } }
+        var last = withFrameMillis { it }
+        while (true) {
+            // Hold still while you're moving around with the remote, then carry on from the same moment.
+            if (Browsing.active) {
+                androidx.compose.runtime.snapshotFlow { Browsing.active }.first { !it }
+                last = withFrameMillis { it }
+            }
+            withFrameMillis { if (it - last >= fps) { value += (it - last) / 1000f; last = it } }
+        }
     }
 
     val drops = remember(wet) {
@@ -696,7 +724,9 @@ private fun SkyContent(
     val life = remember(season, weather, nightBucket, animate) { if (animate) SeasonalLife.pick(season, weather, look.night) else SeasonalLife.pick(Season.WINTER, Sky.SNOW, 0f) }
     val twinklers = remember(stars) { stars.filter { it.a > 0.55f && it.y < 0.55f }.take(26) }
 
-    Canvas(Modifier.fillMaxSize().graphicsLayer { clip = true }) {
+    // One offscreen layer: between the sky's own ticks (and all the while it holds still during browsing) the
+    // whole sky is a single cached texture, instead of a base, cloud layers and particles drawn every frame.
+    Canvas(Modifier.fillMaxSize().graphicsLayer { clip = true; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
         val w = size.width; val h = size.height
         val sc = h / 1080f
         val prev = previous

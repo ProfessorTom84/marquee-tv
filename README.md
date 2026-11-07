@@ -4,15 +4,19 @@ Marquee replaces the Google TV home screen with one built around what you alread
 
 - **No ads, no sponsored rows, no rentals or purchases.** Every pick is on your Plex, included in a subscription you have, or genuinely free. Ad-supported tiers are never recommended.
 - **Three home styles:** Dashboard (weather, calendar, watch-time cards), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day and goes Ambient when idle. It also works as the system screensaver.
-- **Plex-first recommendations:** unwatched, top-rated titles from your library, ranked alongside what's trending and top-rated on your services, with "Because you watched…" reasons from your Plex history.
+- **A feed built around your services, with the best of your Plex:**
+  - **For you** mixes about 50% your services, 20% Plex, 15% YouTube and 15% continue watching, and never shows the same service twice in a row.
+  - **A row for each service** ("New on Netflix", "Popular on Max", "Top 10 on Disney+"). Two or three services rotate in each time you come home, taking turns so no service takes over.
+  - **"Because you watched…"** takes something you finished on Plex and finds similar titles on Netflix, Hulu and your other services.
+  - **Mood and genre rows** ("Easy comedies", "Gripping thrillers", "Under 90 minutes"…) mix all your services; Plex fills gaps instead of leading.
+  - **Plex gets two rows:** Continue watching, and one rotating **From your Plex** row (Plex's own hubs, a collection spotlight and recently added, merged), which favours new and unwatched titles.
+  - **Feed balance** (Settings → Your services, or the phone setup page): More Plex, Balanced or More services. It applies to the rows and to Pick Together.
 - **Calendar with leave-now alerts:** reads your Google Calendar's private iCal link, checks live traffic, and shows a "time to leave" card over whatever is playing, with a QR code for directions on your phone.
 - **TizenTube (or SmartTube) instead of YouTube:** your preferred YouTube app replaces YouTube everywhere, including the remote's YouTube button. "New from your subscriptions" opens there.
 - **Ribbons that change over time:**
   - **Seasonal and holiday ribbons:** Halloween, Thanksgiving, Christmas, New Year's, Valentine's, awards season, May the 4th, summer, back to school and Friday the 13th.
   - **Weather ribbons:** rainy-night comfort picks and snow days.
   - **Time-of-week ribbons:** Friday movie night, easy Sunday, and short episodes before bed.
-  - **Your Plex's own rotating hubs:** anything you promote to Home with "Manage Recommendations" always shows; Top Rated, Because you watched, More in a genre and By a director rotate daily.
-  - **More rotating rows:** a daily collection spotlight and "New on your services".
   - **How seasonal picks are chosen:** your own Plex collections by name (e.g. "Halloween"), then library titles tagged on TMDB (e.g. *halloween*), then genres, then titles included with your services.
 - **Plezy support:** play your Plex library in Plezy instead of the Plex app, using Plezy's `plezy://play` links. It can also open Plezy wherever the Plex app would open.
 - **"What should we watch?"** A mood, length and type picker. It uses plain filters and ratings, no AI.

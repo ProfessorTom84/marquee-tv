@@ -14,6 +14,22 @@ enum class HomeStyle(val label: String, val blurb: String) {
     AMBIENT("Ambient", "Artwork, a big clock and only what matters now");
 }
 
+/**
+ * How the home rows and Pick Together lean between your Plex library and your streaming services.
+ * [svc], [plex], [yt] and [cont] are the "For you" row's lane weights (percent).
+ */
+enum class FeedBalance(val label: String, val blurb: String, val svc: Int, val plex: Int, val yt: Int, val cont: Int) {
+    MORE_PLEX("More Plex", "Your library leads; services fill in", 35, 35, 15, 15),
+    BALANCED("Balanced", "Mostly your services, with the best of your Plex", 50, 20, 15, 15),
+    MORE_SERVICES("More services", "Discovery across your services; Plex only fills gaps", 60, 10, 15, 15);
+
+    fun next() = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun parse(s: String?) = entries.firstOrNull { it.name == s } ?: BALANCED
+    }
+}
+
 data class Profile(val name: String, val style: String /* HomeStyle name or "AUTO" */, val kidSafe: Boolean = false)
 
 /** Everything the launcher remembers. API keys and tokens never leave the device. */
@@ -31,6 +47,7 @@ data class Settings(
     val eveningStyle: HomeStyle = HomeStyle.CINEMATIC,
     val idleMinutes: Int = 10,
     val previews: String = "PLEX", // OFF | PLEX
+    val feedBalance: FeedBalance = FeedBalance.BALANCED, // home rows and Pick Together: Plex vs your services
     val profiles: List<Profile> = listOf(Profile("Me", "AUTO")),
     val activeProfile: Int = 0,
     // Takeover
@@ -170,6 +187,7 @@ class SettingsStore(context: Context) {
             eveningStyle = style("eveningStyle", d.eveningStyle),
             idleMinutes = sp.getInt("idleMinutes", d.idleMinutes),
             previews = s("previews").ifBlank { d.previews },
+            feedBalance = FeedBalance.parse(sp.getString("feedBalance", null)),
             profiles = decodeProfiles(s("profiles")).ifEmpty { d.profiles },
             activeProfile = sp.getInt("activeProfile", 0),
             takeoverHome = sp.getBoolean("takeoverHome", d.takeoverHome),
@@ -226,6 +244,7 @@ class SettingsStore(context: Context) {
             putString("eveningStyle", v.eveningStyle.name)
             putInt("idleMinutes", v.idleMinutes)
             putString("previews", v.previews)
+            putString("feedBalance", v.feedBalance.name)
             putString("profiles", encodeProfiles(v.profiles))
             putInt("activeProfile", v.activeProfile)
             putBoolean("takeoverHome", v.takeoverHome)

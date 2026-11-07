@@ -395,6 +395,12 @@ private fun AccountsSection(vm: MarqueeVm, s: Settings) {
 private fun ServicesSection(vm: MarqueeVm, s: Settings) {
     val store = vm.app.store
     H("Your services", "Picks only come from these plans, your Plex library, and genuinely free sources. Rentals, purchases and ad-supported tiers are never shown.")
+    ValueRow(
+        "Feed balance", s.feedBalance.label,
+        sub = "${s.feedBalance.blurb}. Applies to the home rows and Pick Together.",
+        onClick = { store.update { it.copy(feedBalance = it.feedBalance.next()) } },
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
     Providers.all.forEach { p ->
         val installed = p.packages.any { vm.app.apps.isInstalled(it) }
         Toggle(p.id in s.services, p.name, if (installed) "App installed" else "App not installed on this TV", {

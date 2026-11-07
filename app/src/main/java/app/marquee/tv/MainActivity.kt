@@ -95,6 +95,10 @@ class MainActivity : ComponentActivity() {
         if (event.action == KeyEvent.ACTION_DOWN) {
             vm.onKey()
             app.marquee.tv.ui.components.SoundFx.keyPressed()
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN -> app.marquee.tv.ui.components.Browsing.onNavKey()
+            }
             if (event.keyCode == KeyEvent.KEYCODE_BACK && event.repeatCount == 0 && !wasAmbient) app.marquee.tv.ui.components.SoundFx.back()
         }
         // Any button wakes Ambient without also acting on whatever is underneath.

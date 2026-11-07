@@ -72,7 +72,14 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun rememberNow(): LocalDateTime {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
-    LaunchedEffect(Unit) { while (true) { delay(10_000); now = LocalDateTime.now() } }
+    // Tick on the minute (the clock shows h:mm), not every few seconds: each tick recomposes whoever reads it.
+    LaunchedEffect(Unit) {
+        while (true) {
+            val t = LocalDateTime.now()
+            delay(60_000L - (t.second * 1000L + t.nano / 1_000_000L) + 50L)
+            now = LocalDateTime.now()
+        }
+    }
     return now
 }
 

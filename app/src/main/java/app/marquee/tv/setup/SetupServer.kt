@@ -127,6 +127,7 @@ class SetupServer(
                 homeAddress = p["home"]?.trim() ?: s.homeAddress,
                 calendarUrls = p["ics"]?.lines()?.map { it.trim() }?.filter { it.startsWith("http") || it.startsWith("webcal") } ?: s.calendarUrls,
                 services = services,
+                feedBalance = p["balance"]?.let { app.marquee.tv.data.FeedBalance.parse(it) } ?: s.feedBalance,
                 region = p["region"]?.trim()?.uppercase()?.take(2)?.ifBlank { null } ?: s.region,
                 youtubePackage = p["ytApp"] ?: s.youtubePackage,
                 youtubeChannels = channels ?: s.youtubeChannels,
@@ -179,6 +180,10 @@ ${runCatching { health() }.getOrDefault(emptyList()).joinToString("") { c ->
 <form method="post">
 <h2>Your services</h2><p class="hint">Recommendations only include what these plans already cover. Rentals and purchases are never shown.</p>
 $svc
+<label for="balance">Feed balance</label><select id="balance" name="balance">${app.marquee.tv.data.FeedBalance.entries.joinToString("") { b ->
+    "<option value=\"${b.name}\" ${if (b == s.feedBalance) "selected" else ""}>${esc(b.label)}: ${esc(b.blurb)}</option>"
+}}</select>
+<p class="hint">How much your home rows and Pick Together lean on your Plex versus your services.</p>
 <label for="region">Country code</label><input type="text" id="region" name="region" value="${esc(s.region)}">
 
 <h2>Profiles</h2>

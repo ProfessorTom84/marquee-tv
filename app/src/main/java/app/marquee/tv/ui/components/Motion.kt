@@ -85,3 +85,21 @@ fun CardZoomOverlay() {
         }
     }
 }
+
+/**
+ * True while you're moving around with the remote (and for a moment after). The animated sky holds still
+ * meanwhile, so scrolling gets the TV's whole GPU budget; it carries on from where it was once you stop.
+ */
+object Browsing {
+    var active by mutableStateOf(false)
+        private set
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val settle = Runnable { active = false }
+
+    /** Main thread only (called from the activity's key dispatch). */
+    fun onNavKey() {
+        if (!active) active = true
+        handler.removeCallbacks(settle)
+        handler.postDelayed(settle, 900)
+    }
+}

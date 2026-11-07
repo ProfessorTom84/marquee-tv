@@ -1,6 +1,7 @@
 package app.marquee.tv.recs
 
 import app.marquee.tv.data.AvailKind
+import app.marquee.tv.data.FeedBalance
 import app.marquee.tv.data.Availability
 import app.marquee.tv.data.Providers
 import app.marquee.tv.data.Row
@@ -63,12 +64,14 @@ class Recommender(
         val plexOn = s.plexReady
         val tmdbOn = tmdb.ready
         val services = s.services
+        val balance = s.feedBalance
+        val myServices = Providers.all.filter { it.id in services }
 
         val unwatched = safe("Plex") { if (plexOn) plex.unwatchedTopRated() else emptyList() }
         val watched = safe("Plex history") { if (plexOn) plex.recentlyWatched() else emptyList() }
         val cont = safe("Continue watching") { if (plexOn) plex.continueWatching() else emptyList() }
         val added = safe("Recently added") { if (plexOn) plex.recentlyAdded() else emptyList() }
-        val trending = safe("Trending") { if (tmdbOn) tmdb.trending(2) else emptyList() }
+        val trending = safe("Trending") { if (tmdbOn) tmdb.trending(3) else emptyList() }
         val popMovies = safe("Discover") { if (tmdbOn) tmdb.discover("movie", services) else emptyList() }
         val popTv = safe("Discover") { if (tmdbOn) tmdb.discover("tv", services) else emptyList() }
         val topMovies = safe("Top rated") { if (tmdbOn) tmdb.discover("movie", services, sort = "vote_average.desc", minVotes = 3000) else emptyList() }
@@ -78,12 +81,20 @@ class Recommender(
         val library = safe("Plex library") { if (plexOn && occasions.isNotEmpty()) plex.libraryIndex() else emptyList() }
         val plexHubs = safe("Plex hubs") { if (plexOn) plex.rotatingHubs() else emptyList() }
         val plexCollections = safe("Plex collections") { if (plexOn) plex.collections() else emptyList() }
-        val newMovies = safe("New") { if (tmdbOn) tmdb.newOnServices("movie", services) else emptyList() }
-        val newTv = safe("New") { if (tmdbOn) tmdb.newOnServices("tv", services) else emptyList() }
+        // One "New on…" and one "Popular on…" list per service (Top 10 comes from trending, below).
+        val perServiceNew = myServices.associate { p ->
+            p.id to safe("New on ${p.name}") { if (tmdbOn) tmdb.newOnServices("movie", setOf(p.id)) + tmdb.newOnServices("tv", setOf(p.id)) else emptyList() }
+        }
+        val perServicePopular = myServices.associate { p ->
+            p.id to safe("Popular on ${p.name}") {
+                if (tmdbOn) interleave(tmdb.discover("movie", setOf(p.id), minVotes = 150), tmdb.discover("tv", setOf(p.id), minVotes = 150)) else emptyList()
+            }
+        }
 
         val plexItems = unwatched.await()
         val history = watched.await()
         val plexIndex = plex.guidIndex(plexItems + history + added.await())
+        val seed = Occasions.dailySeed()
 
         // Taste: genres you actually finish on Plex.
         val taste = history.flatMap { it.genres }.groupingBy { it }.eachCount().let { counts ->
@@ -91,13 +102,19 @@ class Recommender(
             counts.mapValues { it.value / max }
         }
 
-        // "Because you watched X": TMDB recommendations seeded by your three most recent Plex finishes.
-        val because = mutableMapOf<String, String>()
-        if (tmdbOn) {
-            history.filter { it.tmdbId != null }.take(3).map { seed ->
-                async { seed to tmdb.recommendations(seed.mediaType, seed.tmdbId!!) }
-            }.awaitAll().forEach { (seed, recs) -> recs.forEach { because.putIfAbsent(it.id, seed.title) } }
+        // "Because you watched X": your latest Plex finish, plus two more that change daily.
+        val seeds = history.filter { it.tmdbId != null }.distinctBy { "${it.mediaType}:${it.tmdbId}" }.take(8).let { h ->
+            (h.take(1) + h.drop(1).shuffled(kotlin.random.Random(seed))).take(3)
         }
+        val seedRecs = if (!tmdbOn) emptyList() else seeds.map { sd ->
+            async {
+                sd to runCatching {
+                    (tmdb.recommendations(sd.mediaType, sd.tmdbId!!) + tmdb.similar(sd.mediaType, sd.tmdbId)).distinctBy { it.id }
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll()
+        val because = mutableMapOf<String, String>()
+        seedRecs.forEach { (sd, recs) -> recs.forEach { because.putIfAbsent(it.id, sd.title) } }
 
         // Attach availability to streaming candidates and fold in matching Plex copies.
         suspend fun withAvailability(list: List<Title>): List<Title> = list.distinctBy { it.id }.map { t ->
@@ -117,6 +134,7 @@ class Recommender(
                 }
             }
         }.awaitAll()
+        fun onMyServices(t: Title) = t.availability.any { it.kind != AvailKind.PLEX }
 
         val trend = withAvailability(trending.await())
         val streaming = withAvailability(popMovies.await() + popTv.await() + topMovies.await() + topTv.await())
@@ -144,9 +162,9 @@ class Recommender(
             val tasteScore = if (taste.isEmpty()) 0.0 else t.genres.sumOf { taste[it] ?: 0.0 } / t.genres.size.coerceAtLeast(1)
             val reason = because[t.id]?.let { "Because you watched $it" }
             val fresh = if ((t.year.toIntOrNull() ?: 0) >= Year.now().value - 2) 0.05 else 0.0
-            val plexBonus = if (t.availability.any { it.kind == AvailKind.PLEX }) 0.06 else 0.0
             val seasonal = if (t.id in seasonalIds) 0.1 else 0.0
-            val total = 0.42 * rating + 0.22 * tr + 0.2 * tasteScore + (if (reason != null) 0.12 else 0.0) + fresh + plexBonus + seasonal
+            // No Plex bonus here: the feed balance decides how much Plex "For you" gets.
+            val total = 0.42 * rating + 0.22 * tr + 0.2 * tasteScore + (if (reason != null) 0.12 else 0.0) + fresh + seasonal
             return t.copy(
                 score = total,
                 reason = reason ?: t.reason ?: when {
@@ -160,11 +178,12 @@ class Recommender(
         }
 
         // ---- Themed ribbons that change with the season, the weather and the day ----
-        val seed = Occasions.dailySeed()
         val collections = plexCollections.await()
         val libraryItems = library.await()
         val libIdx = plex.guidIndex(libraryItems)
         fun dedupeKey(t: Title) = if (t.tmdbId != null) "tmdb:${t.mediaType}:${t.tmdbId}" else t.id
+        // Only an explicit "More Plex" lifts your library above better-rated titles on your services.
+        val plexLift = if (balance == FeedBalance.MORE_PLEX) 0.5 else 0.0
 
         suspend fun occasionRow(o: Occasion): Row? {
             val types = if (o.type == "any") listOf("movie", "tv") else listOf(o.type)
@@ -189,17 +208,97 @@ class Recommender(
             val all = (plexPart + streamingPart).distinctBy(::dedupeKey).filter(::kidOk)
             if (all.size < 4) return null
             // Best-rated first, but the top 30 rotate daily so the ribbon feels fresh.
-            val ranked = all.sortedByDescending { (it.rating ?: 0.0) + (if (it.source == Source.PLEX) 0.5 else 0.0) }
+            val ranked = all.sortedByDescending { (it.rating ?: 0.0) + (if (it.source == Source.PLEX) plexLift else 0.0) }
             val rotated = ranked.take(30).shuffled(kotlin.random.Random(seed + o.key.hashCode())) + ranked.drop(30)
-            return Row("occ:${o.key}", o.title, o.subtitle, rotated.take(20).map { it.copy(badge = it.badge ?: o.badge, reason = it.reason ?: "${o.title} pick") })
+            return Row("${FeedLayout.OCC}${o.key}", o.title, o.subtitle, rotated.take(20).map { it.copy(badge = it.badge ?: o.badge, reason = it.reason ?: "${o.title} pick") })
         }
-        val occasionRows = occasions.map { o -> async { runCatching { occasionRow(o) }.getOrNull() } }.awaitAll().filterNotNull()
-        // A couple of seasonal picks compete for "Tonight for you" too.
-        val seasonalPicks = occasionRows.firstOrNull()?.items?.take(4).orEmpty()
-        seasonalIds = seasonalPicks.map { it.id }.toSet()
+        val occasionRows = occasions.map { o -> async { runCatching { occasionRow(o) }.getOrNull() } }
 
-        val candidates = (plexItems.filter { !it.plexViewed } + streaming + trend.filter { it.availability.isNotEmpty() } + seasonalPicks.filter { !it.plexViewed })
-            .groupBy { if (it.tmdbId != null) "tmdb:${it.mediaType}:${it.tmdbId}" else it.id }
+        // ---- Mood and genre rows: all your services mixed, Plex fills gaps ----
+        fun plexGenreMatch(t: Title, names: List<String>) =
+            names.isEmpty() || t.genres.any { g -> names.any { n -> g.contains(n, true) || n.contains(g, true) } }
+        suspend fun moodRow(m: Mood): Row? {
+            if (services.isEmpty() && plexItems.isEmpty()) return null
+            val raw = if (!tmdbOn) emptyList() else m.types.map { ty ->
+                async {
+                    val g = if (ty == "movie") m.movieGenres else m.tvGenres
+                    if (ty == "tv" && g.isEmpty() && m.movieGenres.isNotEmpty()) emptyList()
+                    else tmdb.discover(ty, services, g, if (ty == "movie") m.maxRuntime else null, sort = m.sort, minVotes = m.minVotes)
+                }
+            }.awaitAll().let { lists -> lists.reduceOrNull { a, b -> interleave(a, b) }.orEmpty() }
+            // The best 20 take turns leading from day to day.
+            val pool = raw.take(20).shuffled(kotlin.random.Random(seed + m.key.hashCode())) + raw.drop(20)
+            val svc = FeedLayout.spreadByService(withAvailability(pool.take(18)).filter { onMyServices(it) && kidOk(it) })
+            val plexNames = m.plexGenres.ifEmpty { m.movieGenres.mapNotNull { TmdbRepo.genreNames[it] } }
+            val fill = plexItems.filter { p ->
+                !p.plexViewed && p.mediaType in m.types && kidOk(p) && plexGenreMatch(p, plexNames) &&
+                    (m.maxRuntime == null || p.mediaType == "tv" || (p.runtimeMin ?: Int.MAX_VALUE) <= m.maxRuntime) &&
+                    svc.none { it.tmdbId != null && it.tmdbId == p.tmdbId }
+            }.sortedByDescending { it.rating ?: 0.0 }.take(12).shuffled(kotlin.random.Random(seed * 7 + m.key.hashCode()))
+            val items = FeedLayout.servicesFirst(svc, fill, balance).distinctBy(::dedupeKey)
+            if (items.size < 5) return null
+            val where = FeedLayout.servicesPhrase(items)
+            return Row("${FeedLayout.MOOD}${m.key}", m.title, listOf(m.subtitle, where).filter { it.isNotBlank() }.joinToString(" · "),
+                items.map { it.copy(reason = it.reason ?: m.title) })
+        }
+        val moodRows = Moods.forToday(seed, profile.kidSafe).map { m -> async { runCatching { moodRow(m) }.getOrNull() } }
+
+        // ---- "Because you watched…": your Plex history, discovered on your services ----
+        val becauseRows = seedRecs.map { (sd, recs) ->
+            async {
+                runCatching {
+                    val avail = withAvailability(recs.take(24)).filter(::kidOk)
+                    // The point is finding it somewhere else: titles you already have on Plex only join under More Plex.
+                    val elsewhere = avail.filter { onMyServices(it) && it.availability.none { a -> a.kind == AvailKind.PLEX } }
+                    val owned = if (balance == FeedBalance.MORE_PLEX) avail.filter { it.availability.any { a -> a.kind == AvailKind.PLEX } && !it.plexViewed } else emptyList()
+                    val items = (FeedLayout.spreadByService(elsewhere) + owned).take(16)
+                    if (items.size < 4) null else Row(
+                        "${FeedLayout.BECAUSE}${sd.mediaType}:${sd.tmdbId}", "Because you watched ${sd.title}",
+                        FeedLayout.servicesPhrase(items).ifBlank { "From your Plex history" },
+                        items.map { it.copy(reason = "Because you watched ${sd.title}") },
+                    )
+                }.getOrNull()
+            }
+        }
+
+        // ---- One row per service: New on…, Popular on…, Top 10 on… ----
+        val serviceRows = myServices.map { p ->
+            async {
+                runCatching {
+                    val way = Availability(AvailKind.INCLUDED, p.name, p.id, score = 50)
+                    // TMDB's lists are already filtered to this service, so no extra where-to-watch lookups are needed.
+                    fun prep(list: List<Title>) = list.distinctBy { it.id }.filter(::kidOk).map { t ->
+                        val inPlex = plexIndex["tmdb:${t.mediaType}:${t.tmdbId}"]
+                        t.copy(availability = listOf(way), plexKey = inPlex?.plexKey, plexViewed = inPlex?.plexViewed ?: false)
+                    }
+                    val name = p.name.uppercase()
+                    val fresh = prep(perServiceNew.getValue(p.id).await()).sortedByDescending { it.popularity }.take(20)
+                    val popular = prep(perServicePopular.getValue(p.id).await())
+                    val trendingHere = trend.filter { t -> t.availability.any { it.providerId == p.id } && kidOk(t) }.sortedBy { it.trendRank ?: 999 }
+                    val (top, topSub) = if (trendingHere.size >= 6) trendingHere.take(10) to "Trending this week"
+                        else popular.sortedByDescending { it.popularity }.take(10) to "Most popular right now"
+                    val topIds = top.map { it.id }.toSet()
+                    buildList {
+                        if (top.size >= 5) add(Row("${FeedLayout.SVC}${p.id}:top10", "Top 10 on ${p.name}", topSub,
+                            top.mapIndexed { i, t -> t.copy(availability = listOf(way), badge = "#${i + 1} ON $name") }))
+                        if (fresh.size >= 5) add(Row("${FeedLayout.SVC}${p.id}:new", "New on ${p.name}", "Recently released · included with ${p.name}",
+                            fresh.map { it.copy(badge = it.badge ?: "NEW") }))
+                        popular.filter { it.id !in topIds }.take(20).takeIf { it.size >= 5 }
+                            ?.let { add(Row("${FeedLayout.SVC}${p.id}:popular", "Popular on ${p.name}", "Included with ${p.name}", it)) }
+                    }
+                }.getOrElse { errors += "${p.name}: ${it.message}"; emptyList() }
+            }
+        }
+
+        val occasionList = occasionRows.awaitAll().filterNotNull()
+        // A couple of seasonal picks compete for "For you" too.
+        val seasonalPicks = occasionList.firstOrNull()?.items?.take(4).orEmpty()
+        seasonalIds = seasonalPicks.map { it.id }.toSet()
+        val becauseList = becauseRows.awaitAll().filterNotNull()
+
+        val candidates = (plexItems.filter { !it.plexViewed } + streaming + trend.filter { it.availability.isNotEmpty() } +
+            seasonalPicks.filter { !it.plexViewed } + becauseList.flatMap { it.items.take(4) })
+            .groupBy(::dedupeKey)
             .map { (_, dupes) -> dupes.maxBy { it.availability.size + (if (it.source == Source.PLEX) 1 else 0) } }
             .filter { !it.plexViewed && kidOk(it) }
             .map(::score)
@@ -212,8 +311,8 @@ class Recommender(
         val ytPicks = if (!ytAllowed) emptyList() else yt.await().take(6).mapIndexed { i, v ->
             v.copy(score = 0.62 - i * 0.03 + (if (daytime) 0.06 else 0.0), badge = "NEW VIDEO", reason = "New from ${v.channel}")
         }
-        val resume = cont.await().filter(::kidOk).take(3).mapIndexed { i, c ->
-            c.copy(score = 0.66 - i * 0.04, badge = c.badge ?: "CONTINUE", reason = "Pick up where you left off")
+        val resume = cont.await().filter(::kidOk).take(4).mapIndexed { i, c ->
+            c.copy(score = 0.66 - i * 0.04, badge = c.badge ?: "CONTINUE", reason = FeedLayout.RESUME_REASON)
         }
         fun timeFit(t: Title): Double {
             val rt = t.runtimeMin ?: (if (t.mediaType == "tv") 45 else 110)
@@ -225,60 +324,49 @@ class Recommender(
             }
         }
         val pool = (candidates.map { it.copy(score = it.score + timeFit(it)) } + ytPicks + resume).distinctBy(::dedupeKey)
-        // Balanced mix: a fixed rhythm of lanes so every row has your services, your Plex, YouTube and something
-        // to resume, with the best pick first. Within the services lane, avoid the same service twice in a row.
-        fun laneOf(t: Title) = when {
-            t.source == Source.YOUTUBE -> "yt"
-            t.reason == "Pick up where you left off" -> "cont"
-            t.bestAvailability?.kind == AvailKind.PLEX -> "plex"
-            else -> "svc"
-        }
-        val lanes = pool.sortedByDescending { it.score }.groupBy(::laneOf).mapValues { it.value.toMutableList() }
-        val pattern = listOf("top", "svc", "yt", "plex", "cont", "svc", "yt", "plex", "svc", "yt", "plex", "svc", "cont", "yt", "plex", "svc", "yt", "svc")
-        val chosen = mutableListOf<Title>()
-        var lastService: String? = null
-        for (p in pattern) {
-            if (chosen.size >= 16) break
-            val lane = if (p == "top") lanes.entries.filter { it.value.isNotEmpty() && it.key != "cont" }.maxByOrNull { it.value.first().score }?.key else p
-            val list = lane?.let { lanes[it] }?.takeIf { it.isNotEmpty() }
-                ?: lanes.entries.filter { it.value.isNotEmpty() }.maxByOrNull { it.value.first().score }?.value ?: break
-            val pick = if (lane == "svc") list.firstOrNull { it.bestAvailability?.name != lastService } ?: list.first() else list.first()
-            if (laneOf(pick) == "svc") lastService = pick.bestAvailability?.name
-            chosen += pick; list.remove(pick)
-        }
-        val tonight = enrichTop(chosen)
+            .sortedByDescending { it.score }
+        // About 50% services, 20% Plex, 15% YouTube and 15% continue watching (per the feed balance),
+        // spread evenly, and never the same service twice in a row.
+        val tonight = enrichTop(FeedLayout.forYou(pool, balance))
         val featured = tonight.firstOrNull { it.backdropUrl != null && it.source != Source.YOUTUBE }
 
+        // ---- From your Plex: Plex's hubs, a collection spotlight and recently added, merged into one row ----
+        val nowSec = System.currentTimeMillis() / 1000
+        val hubs = plexHubs.await()
+        val spotlight = collections.filter { c -> occasions.none { o -> o.collectionWords.any { c.title.contains(it, true) } } }
+            .shuffled(kotlin.random.Random(seed * 31)).firstOrNull()
+        val spotItems = spotlight?.let { c -> runCatching { plex.collectionItems(c.key) }.getOrDefault(emptyList()) }.orEmpty()
+        val plexRow = buildList {
+            added.await().forEach { add(Triple(it, "Recently added to your Plex", 0.0)) }
+            hubs.shuffled(kotlin.random.Random(seed)).forEach { h -> h.items.forEach { add(Triple(it, "${h.title} · from your Plex", if (h.promoted) 0.15 else 0.0)) } }
+            spotItems.forEach { add(Triple(it, "From your ${spotlight?.title} collection", 0.05)) }
+            plexItems.take(30).forEach { add(Triple(it, "Top rated and unwatched in your library", 0.0)) }
+        }.filter { kidOk(it.first) }.map { (t, why, lift) ->
+            val ageDays = if (t.addedAt > 0) (nowSec - t.addedAt) / 86400 else Long.MAX_VALUE
+            val newness = when { ageDays <= 14 -> 0.5; ageDays <= 45 -> 0.25; else -> 0.0 }
+            val sc = (t.rating ?: 6.5) / 10.0 + (if (t.plexViewed) -0.5 else 0.45) + newness + lift
+            t.copy(score = sc, reason = why, badge = t.badge ?: if (ageDays <= 14) "JUST ADDED" else null)
+        }.sortedByDescending { it.score }.distinctBy(::dedupeKey).distinctBy { it.title }.take(30)
+
         val rows = buildList {
-            if (tonight.isNotEmpty()) add(Row("tonight", forYouTitle(hour), "A mix from your Plex, your services and YouTube · nothing to buy or rent", tonight))
-            addAll(occasionRows)
-            cont.await().filter(::kidOk).takeIf { it.isNotEmpty() }?.let { add(Row("continue", "Continue watching", "From your Plex", it)) }
-            yt.await().takeIf { it.isNotEmpty() && ytAllowed }?.let { add(Row("youtube", if (youtube.signedIn) "New from your subscriptions" else "Fresh on YouTube", "Opens in your YouTube app", it)) }
-            withAvailability((newMovies.await() + newTv.await()).sortedByDescending { it.popularity }.take(24))
-                .filter { it.availability.isNotEmpty() && kidOk(it) }.takeIf { it.size >= 4 }
-                ?.let { add(Row("new", "New on your services", "Recently released and already included", it.map { t -> t.copy(badge = t.badge ?: "NEW") })) }
-            // Plex's own ribbons: anything you promoted to Home always shows; the rest rotate daily.
-            val hubs = plexHubs.await().map { h -> h.copy(items = h.items.filter(::kidOk)) }.filter { it.items.size >= 4 }
-            val promoted = hubs.filter { it.promoted }
-            val rotating = hubs.filter { !it.promoted }.shuffled(kotlin.random.Random(seed)).take(3)
-            (promoted + rotating).forEachIndexed { i, h -> add(Row("hub:${h.id}:$i", h.title, "From your Plex", h.items)) }
-            collections.filter { c -> occasions.none { o -> o.collectionWords.any { c.title.contains(it, true) } } }
-                .shuffled(kotlin.random.Random(seed * 31)).firstOrNull()
-                ?.let { c -> plex.collectionItems(c.key).filter(::kidOk).takeIf { it.size >= 4 }?.let { add(Row("coll:${c.key}", "Collection spotlight: ${c.title}", "From your Plex · changes daily", it)) } }
-            added.await().filter(::kidOk).takeIf { it.isNotEmpty() }?.let { add(Row("added", "Recently added to your Plex", "", it)) }
+            if (tonight.isNotEmpty()) add(Row(FeedLayout.FOR_YOU, forYouTitle(hour), "A mix from your services, your Plex and YouTube · nothing to buy or rent", tonight))
+            addAll(occasionList)
+            cont.await().filter(::kidOk).takeIf { it.isNotEmpty() }?.let { add(Row(FeedLayout.CONTINUE, "Continue watching", "From your Plex", it)) }
+            yt.await().takeIf { it.isNotEmpty() && ytAllowed }?.let { add(Row(FeedLayout.YOUTUBE, if (youtube.signedIn) "New from your subscriptions" else "Fresh on YouTube", "Opens in your YouTube app", it)) }
+            serviceRows.awaitAll().forEach(::addAll)
+            addAll(becauseList)
+            addAll(moodRows.awaitAll().filterNotNull())
+            if (plexRow.size >= 4) add(Row(FeedLayout.PLEX, "From your Plex", "New and unwatched first · changes every visit", plexRow))
             trend.filter { it.availability.isNotEmpty() && kidOk(it) }.map(::score).takeIf { it.isNotEmpty() }
-                ?.let { add(Row("trending", "Trending on your services", "", it.take(20))) }
+                ?.let { add(Row(FeedLayout.TRENDING, "Trending on your services", "", it.take(20))) }
             (topMovies.await() + topTv.await()).mapNotNull { t -> streaming.firstOrNull { it.id == t.id } }.filter(::kidOk)
                 .sortedByDescending { it.rating ?: 0.0 }.takeIf { it.isNotEmpty() }
-                ?.let { add(Row("toprated", "Top rated on your services", "", it.take(20).map(::score))) }
-            trend.filter { it.availability.isEmpty() && it.elsewhere.isNotEmpty() && kidOk(it) }
-                .map { it.copy(badge = "#${it.trendRank} TRENDING") }.takeIf { it.isNotEmpty() }
-                ?.let { add(Row("elsewhere", "Trending everywhere", "Just so you know · not on your services · nothing to buy or rent", it.take(12))) }
+                ?.let { add(Row(FeedLayout.TOP_RATED, "Top rated on your services", "", it.take(20).map(::score))) }
         }
         // Hard rule: only your Plex, your chosen services, or YouTube. Nothing from services you haven't picked.
         fun allowed(t: Title) = t.source == Source.YOUTUBE ||
             t.availability.any { it.kind == AvailKind.PLEX || (it.providerId != null && it.providerId in services) }
-        val cleanRows = rows.filter { it.key != "elsewhere" }
+        val cleanRows = rows
             .map { r -> r.copy(items = r.items.filter(::allowed).map { t -> t.copy(availability = t.availability.filter { it.kind == AvailKind.PLEX || it.providerId in services }) }.distinctBy { it.id }) }
             .filter { it.items.size >= 3 }
             .distinctBy { it.key }
@@ -409,7 +497,8 @@ class Recommender(
 
     /**
      * Pick Together's deck: led by what's new, trending and popular across *all* your services (spread evenly
-     * between them), with Plex limited to things you've just added or haven't watched yet.
+     * between them), with Plex limited to things you've just added or haven't watched yet. How often Plex
+     * comes up follows the feed balance (see [togetherMix]).
      */
     suspend fun togetherCandidates(f: Filters): List<Title> = coroutineScope {
         val types = if (f.type == "any") listOf("movie", "tv") else listOf(f.type)
@@ -457,15 +546,29 @@ class Recommender(
         val byService = onServices.groupBy { it.availability.firstOrNull { a -> a.kind != AvailKind.PLEX }?.providerId }.values.toList()
         val balanced = buildList { val n = byService.maxOfOrNull { it.size } ?: 0; for (i in 0 until n) byService.forEach { g -> g.getOrNull(i)?.let(::add) } }
 
-        // Two from your services, then one new-to-you from Plex.
         val fromPlex = plexNew.await().filter { p -> balanced.none { it.tmdbId != null && it.tmdbId == p.tmdbId } }
-        val out = mutableListOf<Title>()
-        var si = 0; var pi = 0
-        while (si < balanced.size || pi < fromPlex.size) {
-            repeat(2) { balanced.getOrNull(si++)?.let(out::add) }
-            fromPlex.getOrNull(pi++)?.let(out::add)
+        togetherMix(balanced, fromPlex, s.feedBalance)
+    }
+
+    companion object {
+        /**
+         * Pick Together's deck order: services and Plex in turn, by the feed balance. More Plex alternates
+         * one and one, Balanced is two services then one Plex, More services is four then one.
+         */
+        fun togetherMix(services: List<Title>, plex: List<Title>, balance: FeedBalance): List<Title> {
+            val (svcRun, plexRun) = when (balance) {
+                FeedBalance.MORE_PLEX -> 1 to 1
+                FeedBalance.BALANCED -> 2 to 1
+                FeedBalance.MORE_SERVICES -> 4 to 1
+            }
+            val out = mutableListOf<Title>()
+            var si = 0; var pi = 0
+            while (si < services.size || pi < plex.size) {
+                repeat(svcRun) { services.getOrNull(si++)?.let(out::add) }
+                repeat(plexRun) { plex.getOrNull(pi++)?.let(out::add) }
+            }
+            return out
         }
-        out
     }
 
     /** The non-AI "What should we watch?" picker. */
@@ -493,8 +596,9 @@ class Recommender(
                 }
             }
         }.awaitAll().filter { it.availability.isNotEmpty() }
+        val plexLift = when (s.feedBalance) { FeedBalance.MORE_PLEX -> 0.4; FeedBalance.BALANCED -> 0.15; FeedBalance.MORE_SERVICES -> 0.0 }
         val merged = (fromPlex + streamed).distinctBy { it.tmdbId?.let { id -> "${it.mediaType}:$id" } ?: it.id }
-            .sortedByDescending { (it.rating ?: 0.0) + if (it.source == Source.PLEX) 0.4 else 0.0 }
+            .sortedByDescending { (it.rating ?: 0.0) + if (it.source == Source.PLEX) plexLift else 0.0 }
         enrichTop(merged.take(9)) + merged.drop(9).take(15)
     }
 
