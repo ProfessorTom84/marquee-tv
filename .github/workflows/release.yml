@@ -78,3 +78,5 @@ jobs:
           else
             gh release create "${TAG}" "marquee-${TAG}.apk" --target "${GITHUB_SHA}" --title "Marquee ${TAG#v}" --generate-notes
           fi
+          # TVs only follow GitHub's "latest" release, which never includes pre-releases: make sure this one counts.
+          gh release edit "${TAG}" --prerelease=false --draft=false --latest
