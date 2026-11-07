@@ -1,16 +1,18 @@
 name: Release
 
-# Push a tag like v0.14.0 (matching versionName in app/build.gradle.kts), or create a release with that tag on
-# github.com, and GitHub builds, signs and attaches the APK. Every Marquee TV picks it up within a few hours and
-# installs it while idle.
+# Releases happen by themselves: bump versionName / versionCode in app/build.gradle.kts and push to main. If that
+# version has no release yet, GitHub tests, builds, signs and publishes it (creating the v<version> tag). Pushes
+# that don't change the version do nothing. Pushing a tag like v0.14.0, or creating a release with that tag on
+# github.com, works too. Every Marquee TV picks a new release up within a few hours and installs it while idle.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
 
-# A release made on github.com can fire both the tag push and the release event: build it once.
+# One build per ref at a time (a release made on github.com fires both the tag push and the release event).
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -24,38 +26,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to release
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} doesn't match versionName $v"; exit 1; }
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "v$v" --json assets --jq '.assets[].name' 2>/dev/null | grep -q '\.apk$'; then
+            echo "v$v is already released; nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@v4
+        if: steps.v.outputs.go == 'true'
         with:
           distribution: temurin
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v4
+        if: steps.v.outputs.go == 'true'
 
       - name: Restore signing key
+        if: steps.v.outputs.go == 'true'
         run: echo "${{ secrets.MARQUEE_KEYSTORE_B64 }}" | base64 -d > app/marquee-release.jks
 
       - name: Test and build
+        if: steps.v.outputs.go == 'true'
         env:
           MARQUEE_STORE_PASSWORD: ${{ secrets.MARQUEE_STORE_PASSWORD }}
           MARQUEE_KEY_PASSWORD: ${{ secrets.MARQUEE_KEY_PASSWORD }}
           MARQUEE_UPDATE_TOKEN: ${{ secrets.MARQUEE_UPDATE_TOKEN }}
         run: ./gradlew :app:testDebugUnitTest :app:assembleRelease --no-daemon
 
-      - name: Check the tag matches the app version
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          v=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} doesn't match versionName $v"; exit 1; }
-
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.v.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk "marquee-${GITHUB_REF_NAME}.apk"
-          # Made on github.com already? Attach the APK to it; otherwise create the release.
-          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --clobber
+          cp app/build/outputs/apk/release/app-release.apk "marquee-${TAG}.apk"
+          # Already made (on github.com, or by a run for the same tag)? Attach the APK; otherwise create the
+          # release, which also creates the tag on this commit.
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            gh release upload "${TAG}" "marquee-${TAG}.apk" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --title "Marquee ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release create "${TAG}" "marquee-${TAG}.apk" --target "${GITHUB_SHA}" --title "Marquee ${TAG#v}" --generate-notes
           fi

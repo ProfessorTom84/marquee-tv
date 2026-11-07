@@ -29,8 +29,8 @@ No AI is used anywhere in this version.
 
 Marquee updates itself from this repo's **Releases**:
 
-1. Bump `versionName` / `versionCode` in `app/build.gradle.kts`, commit, then tag and push: `git tag v0.14.0 && git push --tags`.
-2. The **Release** workflow tests, builds and signs the APK (the signing key is the `MARQUEE_KEYSTORE_B64` secret, never committed) and publishes it as a release.
+1. Bump `versionName` / `versionCode` in `app/build.gradle.kts` and push to `main`. That's all: no tag needed.
+2. The **Release** workflow notices the new version, tests, builds and signs the APK (the signing key is the `MARQUEE_KEYSTORE_B64` secret, never committed) and publishes it as release `v<version>`, creating the tag. Pushes that don't change the version don't release anything. (Pushing a `v*` tag, or creating a release on github.com, also still works.)
 3. Each TV checks every few hours with its read-only token, verifies the APK is Marquee signed with the same key and newer, then installs it **while the TV is idle** (screen off or screensaver). Settings → Updates shows the status and has *Check now* / *Install now*.
 
 Each TV needs, once: the repo name and a fine-grained, read-only token (this repo only, *Contents: Read*) on its phone setup page, and Marquee installed with itself as installer (`pm install -i app.marquee.tv`) so updates need no confirmation.
