@@ -1,11 +1,19 @@
 name: Release
 
-# Push a tag like v0.14.0 (matching versionName in app/build.gradle.kts) and GitHub builds,
-# signs and publishes the APK. Every Marquee TV picks it up within a few hours and installs it while idle.
+# Push a tag like v0.14.0 (matching versionName in app/build.gradle.kts), or create a release with that tag on
+# github.com, and GitHub builds, signs and attaches the APK. Every Marquee TV picks it up within a few hours and
+# installs it while idle.
 on:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
+
+# A release made on github.com can fire both the tag push and the release event: build it once.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -45,4 +53,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/release/app-release.apk "marquee-${GITHUB_REF_NAME}.apk"
-          gh release create "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --title "Marquee ${GITHUB_REF_NAME#v}" --generate-notes
+          # Made on github.com already? Attach the APK to it; otherwise create the release.
+          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "marquee-${GITHUB_REF_NAME}.apk" --title "Marquee ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
