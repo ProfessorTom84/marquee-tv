@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.widget.Toast
+import kotlinx.coroutines.launch
 import app.marquee.tv.data.AvailKind
 import app.marquee.tv.data.Availability
 import app.marquee.tv.data.Providers
@@ -17,6 +18,10 @@ data class TvApp(val label: String, val packageName: String, val banner: Drawabl
 
 class Apps(private val context: Context) {
     private val pm = context.packageManager
+
+    /** Optional (Watchmode key): links straight to a title inside its streaming app. */
+    var titleLinks: app.marquee.tv.links.TitleLinks? = null
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
 
     fun installed(): List<TvApp> {
         val tv = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
@@ -127,12 +132,34 @@ class Apps(private val context: Context) {
             a.kind == AvailKind.PLEX -> openPlex(title, s)
             a.providerId != null -> {
                 val pkg = providerPackage(a.providerId)
-                if (pkg == null) toast("${a.name} isn't installed on this TV") else {
-                    launch(pkg)
-                    toast("Opening ${a.name}. Search for \"${title.title}\"")
-                }
+                if (pkg == null) toast("${a.name} isn't installed on this TV") else openInService(title, a, a.providerId, pkg)
             }
         }
+    }
+
+    /**
+     * Opens the title itself inside the service's app when Watchmode knows its link (looked up on Play, then kept
+     * for a week); otherwise opens the app and says what to search for, as before.
+     */
+    private fun openInService(title: Title, a: Availability, providerId: Int, pkg: String) {
+        fun fallback() { launch(pkg); toast("Opening ${a.name}. Search for \"${title.title}\"") }
+        val links = titleLinks
+        if (links == null || !links.ready || title.tmdbId == null) return fallback()
+        scope.launch {
+            val urls = kotlinx.coroutines.withTimeoutOrNull(4_000) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { links.linksFor(title, providerId) }.getOrDefault(emptyList()) }
+            }.orEmpty()
+            for (u in urls) if (openLink(app.marquee.tv.links.TitleLinks.forTv(u), pkg)) return@launch
+            fallback()
+        }
+    }
+
+    /** Opens a link in one specific app, if that app says it can handle it. */
+    private fun openLink(url: String, pkg: String): Boolean {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (pkg.startsWith("com.netflix")) i.putExtra("source", "30") // what Netflix's TV app expects from a launcher
+        if (i.resolveActivity(pm) == null) return false
+        return runCatching { context.startActivity(i); true }.getOrDefault(false)
     }
 
     /** Opens Google TV's own settings (or a specific page of them). */

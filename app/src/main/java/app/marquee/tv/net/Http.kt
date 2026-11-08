@@ -23,7 +23,10 @@ import java.util.concurrent.TimeUnit
 
 class HttpException(val code: Int, message: String) : IOException(message)
 
-/** Small JSON-over-HTTP helper with an in-memory TTL cache. */
+/**
+ * Small JSON-over-HTTP helper with a TTL cache kept in memory and on disk. The disk copy means a restart or an
+ * update reuses every lookup that hasn't expired (TMDB, Plex…) instead of re-fetching a few hundred of them.
+ */
 object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -35,17 +38,61 @@ object Http {
     private data class Entry(val at: Long, val body: String)
     private val cache = ConcurrentHashMap<String, Entry>()
 
+    // ---- Disk copy (the app's private cache folder; Android may also clear it when space runs low) ----
+    @Volatile private var diskDir: java.io.File? = null
+    private const val DISK_MAX_BYTES = 48L * 1024 * 1024
+    private const val DISK_MAX_AGE_MS = 31L * 24 * 60 * 60_000
+
+    /** Called once at startup. Trims the folder in the background. */
+    fun init(dir: java.io.File) {
+        diskDir = dir.apply { mkdirs() }
+        Thread { runCatching { prune(dir) } }.apply { priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    private fun prune(dir: java.io.File) {
+        val now = System.currentTimeMillis()
+        val files = dir.listFiles()?.toMutableList() ?: return
+        files.filter { now - it.lastModified() > DISK_MAX_AGE_MS || it.name.endsWith(".tmp") }.forEach { it.delete(); files.remove(it) }
+        var total = files.sumOf { it.length() }
+        if (total <= DISK_MAX_BYTES) return
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= DISK_MAX_BYTES * 3 / 4) break
+            total -= f.length(); f.delete()
+        }
+    }
+
+    private fun diskFile(key: String): java.io.File? = diskDir?.let { d ->
+        val h = java.security.MessageDigest.getInstance("SHA-1").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        java.io.File(d, h)
+    }
+
+    private fun readDisk(key: String, maxAgeMs: Long): Entry? = runCatching {
+        val f = diskFile(key)?.takeIf { it.exists() } ?: return null
+        val at = f.lastModified()
+        if (System.currentTimeMillis() - at >= maxAgeMs) return null
+        Entry(at, f.readText())
+    }.getOrNull()
+
+    private fun writeDisk(key: String, body: String) = runCatching {
+        val f = diskFile(key) ?: return@runCatching
+        val tmp = java.io.File(f.path + ".tmp")
+        tmp.writeText(body)
+        if (!tmp.renameTo(f)) tmp.delete()
+    }
+
     suspend fun getText(url: String, headers: Map<String, String> = emptyMap(), cacheMinutes: Int = 0): String =
         withContext(Dispatchers.IO) {
             val key = url + headers.hashCode()
+            val ttl = cacheMinutes * 60_000L
             if (cacheMinutes > 0) {
-                cache[key]?.let { if (System.currentTimeMillis() - it.at < cacheMinutes * 60_000L) return@withContext it.body }
+                cache[key]?.let { if (System.currentTimeMillis() - it.at < ttl) return@withContext it.body }
+                readDisk(key, ttl)?.let { cache[key] = it; return@withContext it.body }
             }
             val req = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
             client.newCall(req).execute().use { r ->
                 val body = r.body?.string() ?: ""
                 if (!r.isSuccessful) throw HttpException(r.code, "HTTP ${r.code} for ${url.substringBefore('?')}")
-                if (cacheMinutes > 0) cache[key] = Entry(System.currentTimeMillis(), body)
+                if (cacheMinutes > 0) { cache[key] = Entry(System.currentTimeMillis(), body); writeDisk(key, body) }
                 body
             }
         }
@@ -77,7 +124,14 @@ object Http {
             }
         }
 
-    fun clearCache() = cache.clear()
+    fun clearCache() {
+        cache.clear()
+        val files = diskDir?.listFiles() ?: return
+        Thread { files.forEach { it.delete() } }.start() // called from buttons: keep file work off the main thread
+    }
+
+    /** Tests: forget the in-memory copy only, as a restart would. */
+    internal fun forgetMemory() = cache.clear()
 }
 
 // ---- Tiny JSON accessors so API code stays readable ----

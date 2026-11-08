@@ -93,7 +93,6 @@ fun DetailScreen(vm: MarqueeVm, nav: Nav, initial: Title) {
     val t = data?.title ?: initial
     val ways = data?.ways ?: initial.availability
     val best = ways.firstOrNull()
-    val inWatchlist = t.id in s.watchlist
     val list = rememberLazyListState()
     val open: (Title) -> Unit = { x -> if (x.youtubeId != null) vm.app.apps.openYouTube(x.youtubeId, s) else nav.go(Screen.Detail(x)) }
 
@@ -150,9 +149,6 @@ fun DetailScreen(vm: MarqueeVm, nav: Nav, initial: Title) {
                                 "Trailer", height = 40.dp, modifier = if (best == null) Modifier.focusRequester(playFocus) else Modifier,
                                 icon = { Icon(Icons.Filled.PlayArrow, null, Modifier.size(13.dp)) },
                             ) { if (trailerUrl != null) TrailerActivity.start(ctx, trailerUrl) else vm.app.apps.openYouTube(yt!!, s) }
-                            PillButton(if (inWatchlist) "On watchlist" else "Watchlist", height = 40.dp,
-                                modifier = if (best == null && trailerUrl == null && yt == null) Modifier.focusRequester(playFocus) else Modifier,
-                                icon = { Icon(if (inWatchlist) Icons.Filled.Check else Icons.Filled.Add, null, Modifier.size(14.dp)) }) { vm.toggleWatchlist(t) }
                         }
                         // Everything here is already free to you, so no "best way" box: just the other places it's included.
                         val others = ways.drop(1)
@@ -163,7 +159,7 @@ fun DetailScreen(vm: MarqueeVm, nav: Nav, initial: Title) {
                         if (ways.isEmpty() && !loading) {
                             val elsewhere = data?.elsewhere ?: t.elsewhere
                             Text(
-                                if (elsewhere.isNotEmpty()) "Not on your services. Streaming on ${elsewhere.joinToString(", ")}. Add it to your watchlist and Marquee will tell you if it comes to one of yours."
+                                if (elsewhere.isNotEmpty()) "Not on your services. Streaming on ${elsewhere.joinToString(", ")}."
                                 else "Not on your services right now.", style = T.small,
                             )
                         }

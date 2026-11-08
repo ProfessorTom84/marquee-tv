@@ -50,6 +50,12 @@ object HealthChecks {
                 }
             },
             async {
+                // /status costs no credits.
+                probe("watchmode", "Watchmode", s.watchmodeKey.isNotBlank(), "Optional: opens titles directly in Netflix and other apps", "Working") {
+                    Http.get("https://api.watchmode.com/v1/status/?apiKey=${s.watchmodeKey.trim()}")
+                }
+            },
+            async {
                 probe("calendar", "Calendar", s.calendarUrls.isNotEmpty(), "Add your iCal link on the phone page", "${s.calendarUrls.size} calendar${if (s.calendarUrls.size > 1) "s" else ""} readable") {
                     s.calendarUrls.forEach { u ->
                         val body = Http.getText(u.replace("webcal://", "https://"))

@@ -36,6 +36,7 @@ class MarqueeApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        app.marquee.tv.net.Http.init(cacheDir.resolve("http"))
         store = SettingsStore(this)
         app.marquee.tv.ui.components.SoundFx.init(this)
         app.marquee.tv.ui.components.SoundFx.enabled = store.value.uiSounds
@@ -45,7 +46,7 @@ class MarqueeApp : Application(), ImageLoaderFactory {
         calendar = CalendarRepo(store)
         traffic = TrafficRepo(store)
         stats = WatchStats(this)
-        apps = Apps(this)
+        apps = Apps(this).also { it.titleLinks = app.marquee.tv.links.TitleLinks(store) }
         recommender = Recommender(store, plex, tmdb, youtube)
         alerts = app.marquee.tv.system.AlertEngine(store, calendar, traffic)
         app.marquee.tv.system.SelfHeal.ensureAccessibility(this)

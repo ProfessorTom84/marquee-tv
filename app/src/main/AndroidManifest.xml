@@ -88,6 +88,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".system.OvernightInstallReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".system.PackageReplacedReceiver"
             android:exported="false">
             <intent-filter>

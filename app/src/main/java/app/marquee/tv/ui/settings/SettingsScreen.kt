@@ -70,10 +70,12 @@ private val sections = listOf(
     "services" to "Your services",
     "calendar" to "Calendar & alerts",
     "apps" to "Apps on home",
+    "rows" to "Home rows",
     "home" to "Home button & players",
     "weather" to "Weather & background",
     "permissions" to "Permissions & privacy",
     "updates" to "Updates",
+    "perf" to "Performance check",
 )
 
 @Composable
@@ -118,10 +120,12 @@ fun SettingsScreen(vm: MarqueeVm, nav: Nav, initial: String) {
                         "services" -> ServicesSection(vm, s)
                         "calendar" -> CalendarSection(vm, s)
                         "apps" -> AppsSection(vm, s)
+                        "rows" -> RowsSection(vm, s)
                         "home" -> HomeButtonSection(vm, s)
                         "weather" -> WeatherSection(vm, s, nav)
                         "permissions" -> PermissionsSection(vm)
                         "updates" -> UpdatesSection(vm, s)
+                        "perf" -> PerfSection(vm, nav)
                     }
                 }
             }
@@ -220,10 +224,33 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
 }
 
 @Composable
+private fun PerfSection(vm: MarqueeVm, nav: Nav) {
+    val check = app.marquee.tv.system.PerfCheck
+    val phase by check.phase.collectAsState()
+    val activity = LocalContext.current as? android.app.Activity
+    val last = remember(phase) { (phase as? app.marquee.tv.system.PerfCheck.Phase.Done)?.result?.lines() }
+    val saved = remember(phase) { if (last == null) check.lastText(vm.app) else null }
+    H("Performance check", "Measures how smoothly the home screen scrolls on this TV. Press Start, then scroll up and down the home screen for ${app.marquee.tv.system.PerfCheck.SECONDS} seconds. The results come back here, and on the phone setup page so you can copy them.")
+    Group {
+        PillButton("Start check", primary = true, height = 38.dp) {
+            if (activity != null) { check.start(activity); nav.home() }
+        }
+        when {
+            last != null -> last.forEach { (k, v) -> ValueRow(k, v, onClick = {}) }
+            saved != null -> {
+                Text("LAST CHECK", style = T.label, modifier = Modifier.padding(top = 8.dp))
+                saved.lines().forEach { line -> Text(line, style = T.body) }
+            }
+            else -> Text("No check run yet.", style = T.body, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
 private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
     val st by app.marquee.tv.system.Updater.state.collectAsState()
     val (version, _) = remember { app.marquee.tv.system.Updater.currentVersion(vm.app) }
-    H("Updates", "Marquee updates itself from your private GitHub repo. New versions download in the background and install while the TV is idle (screen off or screensaver), never while you're watching.")
+    H("Updates", "Marquee updates itself from your private GitHub repo. New versions download in the background and install overnight while the TV is idle, so Android has time to optimise them before you watch.")
     Group {
         ValueRow("This version", version, onClick = {})
         ValueRow("Update source", s.updateRepo.ifBlank { "Not set up" },
@@ -232,7 +259,7 @@ private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
                 else if (app.marquee.tv.BuildConfig.UPDATE_TOKEN.isNotBlank()) "Using the built-in read-only token"
                 else "No token yet: add one on the phone setup page",
             onClick = {})
-        Toggle(s.autoUpdate, "Update automatically", "Check every few hours and install while the TV is idle", { vm.app.store.update { it.copy(autoUpdate = !it.autoUpdate) } })
+        Toggle(s.autoUpdate, "Update automatically", "Check every few hours and install overnight while the TV is idle", { vm.app.store.update { it.copy(autoUpdate = !it.autoUpdate) } })
         Text(st.message.ifBlank { "Not checked yet" }, style = T.sans(12.sp, FontWeight.SemiBold, if (st.phase == app.marquee.tv.system.Updater.Phase.ERROR) C.Warn else C.AmberSoft), modifier = Modifier.padding(vertical = 4.dp))
         if (st.notes.isNotBlank() && st.latest != null) Text("What's new in ${st.latest}: ${st.notes}", style = T.small, maxLines = 6)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -241,6 +268,50 @@ private fun UpdatesSection(vm: MarqueeVm, s: Settings) {
             if (st.phase == app.marquee.tv.system.Updater.Phase.READY) PillButton("Install now", primary = true, height = 34.dp) { app.marquee.tv.system.Updater.install(vm.app) }
         }
     }
+}
+
+@Composable
+private fun RowsSection(vm: MarqueeVm, s: Settings) {
+    val custom = app.marquee.tv.recs.FeedLayout.RowGroup.parse(s.rowOrder)
+    val hidden = app.marquee.tv.recs.FeedLayout.RowGroup.parse(s.hiddenRows).toSet()
+    // What's shown now: your order, or Marquee's own (by feed balance) until you move something.
+    val order = (custom + app.marquee.tv.recs.FeedLayout.defaultOrder(s.feedBalance)).distinct()
+    val shown = order.filter { it !in hidden }
+    H("Home rows", "Put the rows you care about first and hide the ones you don't. \"For you\" always comes first. " +
+        if (custom.isEmpty()) "Right now Marquee mixes your services, moods and \"Because you watched…\" rows together; moving a row switches to your own order." else "Using your own order.")
+    Group {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("1", style = T.sans(11.sp, FontWeight.Bold, C.TextDim), modifier = Modifier.width(24.dp))
+            Column(Modifier.weight(1f)) {
+                Text(vm.app.recommender.forYouTitle(), style = T.sans(13.sp, FontWeight.Bold))
+                Text("Always first", style = T.small)
+            }
+        }
+        shown.forEachIndexed { i, g ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${i + 2}", style = T.sans(11.sp, FontWeight.Bold, C.TextDim), modifier = Modifier.width(24.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(g.label, style = T.sans(13.sp, FontWeight.Bold), maxLines = 1)
+                    if (g.blurb.isNotBlank()) Text(g.blurb, style = T.small, maxLines = 1)
+                }
+                PillButton("◀ Earlier", height = 30.dp) { vm.moveRowGroup(shown + hidden.toList(), g, -1) }
+                PillButton("Later ▶", height = 30.dp) { vm.moveRowGroup(shown + hidden.toList(), g, 1) }
+                PillButton("Hide", height = 30.dp) { vm.setRowGroupHidden(g, true) }
+            }
+        }
+    }
+    if (hidden.isNotEmpty()) {
+        Text("HIDDEN", style = T.label, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+        Group {
+            order.filter { it in hidden }.forEach { g ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(g.label, style = T.sans(13.sp, FontWeight.Bold, C.TextDim), modifier = Modifier.weight(1f), maxLines = 1)
+                    PillButton("Show on home", height = 30.dp) { vm.setRowGroupHidden(g, false) }
+                }
+            }
+        }
+    }
+    if (custom.isNotEmpty() || hidden.isNotEmpty()) PillButton("Back to Marquee's mix", height = 34.dp, modifier = Modifier.padding(top = 12.dp)) { vm.resetRows() }
 }
 
 @Composable
@@ -517,7 +588,7 @@ private fun PermissionsSection(vm: MarqueeVm) {
 fun HealthPanel(vm: MarqueeVm) {
     val checks by vm.health.collectAsState()
     val settings by vm.settings.collectAsState()
-    LaunchedEffect(settings.tmdbKey, settings.omdbKey, settings.routesKey, settings.plexServerUri, settings.calendarUrls, settings.youtubeRefreshToken, settings.cityName) { vm.checkHealth() }
+    LaunchedEffect(settings.tmdbKey, settings.omdbKey, settings.watchmodeKey, settings.routesKey, settings.plexServerUri, settings.calendarUrls, settings.youtubeRefreshToken, settings.cityName) { vm.checkHealth() }
     Column(Modifier.fillMaxWidth().glass().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Connection status", style = T.sans(14.sp, FontWeight.ExtraBold))
         if (checks.isEmpty()) Text("Checking…", style = T.small)

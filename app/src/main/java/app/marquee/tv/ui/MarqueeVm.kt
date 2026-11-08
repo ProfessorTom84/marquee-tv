@@ -69,6 +69,8 @@ class MarqueeVm : ViewModel() {
     private var lastServices = settings.value.services
     private var lastProfile = settings.value.activeProfile
     private var lastBalance = settings.value.feedBalance
+    private var lastRowOrder = settings.value.rowOrder
+    private var lastHiddenRows = settings.value.hiddenRows
 
     // (Declared before init: init reads them.)
     // ---- Freshness: every time you come back to the TV's home screen, it should feel new ----
@@ -92,6 +94,11 @@ class MarqueeVm : ViewModel() {
                 if (s.services != lastServices) homeBase?.let { homeBase = sanitize(it, s.services); home.value = freshen(homeBase!!, visits) }
                 // A new feed balance re-arranges the rows at once; the refresh then re-mixes "For you" and the rows.
                 if (s.feedBalance != lastBalance) homeBase?.let { home.value = freshen(it, visits) }
+                // Reordering or hiding rows only re-arranges what's already loaded.
+                if (s.rowOrder != lastRowOrder || s.hiddenRows != lastHiddenRows) {
+                    lastRowOrder = s.rowOrder; lastHiddenRows = s.hiddenRows
+                    homeBase?.let { home.value = freshen(it, visits) }
+                }
                 if (s.services != lastServices || s.activeProfile != lastProfile || s.feedBalance != lastBalance) refreshHome()
             }
         }
@@ -131,7 +138,11 @@ class MarqueeVm : ViewModel() {
      */
     private fun freshen(h: HomeData, visit: Int): HomeData {
         val turn = visit + (System.currentTimeMillis() / 3_600_000L).toInt()
-        return h.copy(rows = FeedLayout.arrange(h.rows, settings.value.feedBalance, turn, visit))
+        val s = settings.value
+        return h.copy(rows = FeedLayout.arrange(
+            h.rows, s.feedBalance, turn, visit,
+            order = FeedLayout.RowGroup.parse(s.rowOrder), hidden = FeedLayout.RowGroup.parse(s.hiddenRows).toSet(),
+        ))
     }
 
     fun refreshAll() {
@@ -214,6 +225,18 @@ class MarqueeVm : ViewModel() {
     }
     fun setAppHidden(pkg: String, hidden: Boolean) = app.store.update { it.copy(hiddenApps = if (hidden) it.hiddenApps + pkg else it.hiddenApps - pkg) }
     fun resetApps() = app.store.update { it.copy(appOrder = emptyList(), hiddenApps = emptySet()) }
+
+    // ---- Arranging the home rows (by group) ----
+    /** Moves a row group one place earlier (-1) or later (+1), starting from the order currently shown. */
+    fun moveRowGroup(current: List<FeedLayout.RowGroup>, g: FeedLayout.RowGroup, delta: Int) {
+        val i = current.indexOf(g); val j = i + delta
+        if (i < 0 || j !in current.indices) return
+        val next = current.toMutableList().apply { removeAt(i); add(j, g) }
+        app.store.update { it.copy(rowOrder = next.map { x -> x.name }) }
+    }
+    fun setRowGroupHidden(g: FeedLayout.RowGroup, hidden: Boolean) =
+        app.store.update { it.copy(hiddenRows = if (hidden) it.hiddenRows + g.name else it.hiddenRows - g.name) }
+    fun resetRows() = app.store.update { it.copy(rowOrder = emptyList(), hiddenRows = emptySet()) }
 
     /** Back on the top of the home screen: the screensaver, like Google TV. */
     fun backOnHome() {
@@ -320,10 +343,5 @@ class MarqueeVm : ViewModel() {
     val health = MutableStateFlow<List<Check>>(emptyList())
     fun checkHealth() = viewModelScope.launch {
         health.value = withContext(Dispatchers.IO) { runCatching { HealthChecks.run(app) }.getOrDefault(emptyList()) }
-    }
-
-    fun toggleWatchlist(t: Title) = app.store.update { s ->
-        val k = t.id
-        s.copy(watchlist = if (k in s.watchlist) s.watchlist - k else s.watchlist + k)
     }
 }

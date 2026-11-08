@@ -51,7 +51,56 @@ object FeedLayout {
      * get a row each time, taking turns so no service takes over. [visit] rotates the cards inside
      * "For you" and "From your Plex" (0 = the first load: leave them as ranked).
      */
-    fun arrange(rows: List<Row>, balance: FeedBalance, turn: Int, visit: Int = 0): List<Row> {
+    /**
+     * The groups of rows you can reorder or hide (Settings → Home rows). "For you" always leads and isn't listed.
+     * [defaultOrder] is the order they first appear in Marquee's own mixed layout.
+     */
+    enum class RowGroup(val label: String, val blurb: String) {
+        CONTINUE("Continue watching", "From your Plex"),
+        SEASONAL("Seasonal and weather", "Holidays, rainy nights, movie night…"),
+        SERVICES("Your services", "New on…, Popular on…, Top 10 on…: two or three services each visit"),
+        BECAUSE("Because you watched…", "Like what you finished on Plex, on your services"),
+        MOODS("Moods and genres", "Easy comedies, gripping thrillers, under 90 minutes…"),
+        PLEX("From your Plex", "New and unwatched in your library"),
+        YOUTUBE("YouTube", "New from your subscriptions"),
+        TRENDING("Trending on your services", ""),
+        TOP_RATED("Top rated on your services", "");
+
+        companion object {
+            fun parse(names: Collection<String>) = names.mapNotNull { n -> entries.firstOrNull { it.name == n } }
+        }
+    }
+
+    fun groupOf(key: String): RowGroup? = when {
+        key == CONTINUE -> RowGroup.CONTINUE
+        key.startsWith(OCC) -> RowGroup.SEASONAL
+        key.startsWith(SVC) -> RowGroup.SERVICES
+        key.startsWith(BECAUSE) -> RowGroup.BECAUSE
+        key.startsWith(MOOD) -> RowGroup.MOODS
+        key == PLEX -> RowGroup.PLEX
+        key == YOUTUBE -> RowGroup.YOUTUBE
+        key == TRENDING -> RowGroup.TRENDING
+        key == TOP_RATED -> RowGroup.TOP_RATED
+        else -> null
+    }
+
+    /** Where each group first shows up in the mixed layout, for this balance (what Settings shows before you reorder). */
+    fun defaultOrder(balance: FeedBalance): List<RowGroup> = buildList {
+        add(RowGroup.CONTINUE)
+        if (balance == FeedBalance.MORE_PLEX) add(RowGroup.PLEX)
+        addAll(listOf(RowGroup.SEASONAL, RowGroup.SERVICES, RowGroup.BECAUSE, RowGroup.YOUTUBE, RowGroup.MOODS))
+        if (balance != FeedBalance.MORE_PLEX) add(RowGroup.PLEX)
+        addAll(listOf(RowGroup.TRENDING, RowGroup.TOP_RATED))
+    }
+
+    /**
+     * [order]: your own order of groups (empty = Marquee's mixed layout, which interleaves services, moods and
+     * "Because you watched…"). With your own order each group's rows sit together. [hidden] groups never show.
+     */
+    fun arrange(
+        rows: List<Row>, balance: FeedBalance, turn: Int, visit: Int = 0,
+        order: List<RowGroup> = emptyList(), hidden: Set<RowGroup> = emptySet(),
+    ): List<Row> {
         val byKey = rows.associateBy { it.key }
         fun one(key: String) = byKey[key]
 
@@ -93,7 +142,15 @@ object FeedLayout {
         val extras = rows.filter { r ->
             r.key !in known && listOf(SVC, BECAUSE, MOOD, OCC).none { r.key.startsWith(it) } && !isRetired(r.key)
         }
-        return (out + extras).distinctBy { it.key }
+        val mixed = (out + extras).distinctBy { it.key }.filter { r -> groupOf(r.key)?.let { it !in hidden } ?: true }
+        if (order.isEmpty()) return mixed
+        // Your order: For you first, then each group's rows together (groups you haven't placed keep their usual spot after).
+        val full = order.distinct() + defaultOrder(balance).filter { it !in order }
+        val rank = full.withIndex().associate { (i, g) -> g to i }
+        return mixed.withIndex().sortedWith(compareBy<IndexedValue<Row>>(
+            { if (it.value.key == FOR_YOU) -1 else groupOf(it.value.key)?.let { g -> rank[g] } ?: Int.MAX_VALUE },
+            { it.index },
+        )).map { it.value }
     }
 
     // ---------------------------------- "For you" ----------------------------------

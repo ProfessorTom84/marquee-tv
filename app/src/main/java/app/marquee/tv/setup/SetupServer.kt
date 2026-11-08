@@ -121,6 +121,7 @@ class SetupServer(
             s.copy(
                 tmdbKey = p["tmdbKey"]?.trim() ?: s.tmdbKey,
                 omdbKey = p["omdbKey"]?.trim() ?: s.omdbKey,
+                watchmodeKey = p["watchmodeKey"]?.trim() ?: s.watchmodeKey,
                 routesKey = p["routesKey"]?.trim() ?: s.routesKey,
                 youtubeClientId = p["ytId"]?.trim() ?: s.youtubeClientId,
                 youtubeClientSecret = p["ytSecret"]?.trim() ?: s.youtubeClientSecret,
@@ -177,6 +178,7 @@ ${runCatching { health() }.getOrDefault(emptyList()).joinToString("") { c ->
     val (mark, color) = when (c.health) { app.marquee.tv.system.Health.OK -> "✓" to "#3FAE62"; app.marquee.tv.system.Health.FAILED -> "✕" to "#D9534F"; else -> "–" to "#555B78" }
     "<div style=\"display:flex;gap:10px;align-items:center;margin:6px 0\"><span style=\"display:inline-flex;width:22px;height:22px;border-radius:11px;background:$color;color:#fff;align-items:center;justify-content:center;font-weight:700\">$mark</span><b style=\"min-width:96px\">${esc(c.label)}</b><span style=\"color:#B7BDCF\">${esc(c.detail)}</span></div>"
 }}
+${app.marquee.tv.system.PerfCheck.lastText(app.marquee.tv.MarqueeApp.instance)?.let { "<h2>Last performance check</h2><p class=\"hint\">Run it on the TV: Settings → Performance check.</p><pre style=\"white-space:pre-wrap;background:#141A38;border:1px solid #39406A;border-radius:10px;padding:12px;font-size:13px\">${esc(it)}</pre>" } ?: ""}
 <form method="post">
 <h2>Your services</h2><p class="hint">Recommendations only include what these plans already cover. Rentals and purchases are never shown.</p>
 $svc
@@ -198,6 +200,8 @@ ${s.profiles.mapIndexed { i, pr -> "<label for=\"profile_$i\">Profile ${i + 1} n
 <label for="tmdbKey">TMDB API key or read access token</label><input type="password" id="tmdbKey" name="tmdbKey" value="${esc(s.tmdbKey)}">
 <p class="hint">Free at <a href="https://www.themoviedb.org/settings/api">themoviedb.org/settings/api</a>. Powers trending, where-to-watch and artwork.</p>
 <label for="omdbKey">OMDb API key (optional, for IMDb and Rotten Tomatoes scores)</label><input type="password" id="omdbKey" name="omdbKey" value="${esc(s.omdbKey)}">
+<label for="watchmodeKey">Watchmode API key (optional: "Play on Netflix" opens the title itself, not just the app)</label><input type="password" id="watchmodeKey" name="watchmodeKey" value="${esc(s.watchmodeKey)}">
+<p class="hint">Free at <a href="https://api.watchmode.com/">api.watchmode.com</a>. Marquee only looks a title up when you press Play, and remembers it for a week.</p>
 <p class="hint"><a href="https://www.omdbapi.com/apikey.aspx">omdbapi.com</a></p>
 
 <label for="unsplashKey">Unsplash access key (optional: real photos of where you live as the background)</label><input type="password" id="unsplashKey" name="unsplashKey" value="${esc(s.unsplashKey)}">

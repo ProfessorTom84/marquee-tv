@@ -70,6 +70,7 @@ data class Settings(
     // Keys
     val tmdbKey: String = "",
     val omdbKey: String = "",
+    val watchmodeKey: String = "", // optional: open titles directly inside streaming apps
     val routesKey: String = "",
     val youtubeClientId: String = "",
     val youtubeClientSecret: String = "",
@@ -88,10 +89,10 @@ data class Settings(
     val previewPlace: String = "BACKGROUND", // BACKGROUND | CARD
     val calendarUrls: List<String> = emptyList(),
     val travelBufferMinutes: Int = 5,
-    // Watchlist of TMDB items ("movie:123")
-    val watchlist: Set<String> = emptySet(),
     val appOrder: List<String> = emptyList(),  // your order for the apps ribbon (package names)
     val hiddenApps: Set<String> = emptySet(),   // apps hidden from the ribbon (still in All apps)
+    val rowOrder: List<String> = emptyList(),  // your order of home row groups (FeedLayout.RowGroup names); empty = Marquee's mix
+    val hiddenRows: Set<String> = emptySet(),  // home row groups you've hidden
     val setupToken: String = "",
 ) {
     val hasLocation get() = !latitude.isNaN() && !longitude.isNaN()
@@ -206,6 +207,7 @@ class SettingsStore(context: Context) {
             region = s("region").ifBlank { d.region },
             tmdbKey = s("tmdbKey"),
             omdbKey = s("omdbKey"),
+            watchmodeKey = s("watchmodeKey"),
             routesKey = s("routesKey"),
             youtubeClientId = s("youtubeClientId"),
             youtubeClientSecret = s("youtubeClientSecret"),
@@ -223,9 +225,10 @@ class SettingsStore(context: Context) {
             previewPlace = s("previewPlace").ifBlank { d.previewPlace },
             calendarUrls = s("calendarUrls").split('\n').map { it.trim() }.filter { it.isNotEmpty() },
             travelBufferMinutes = sp.getInt("travelBufferMinutes", d.travelBufferMinutes),
-            watchlist = s("watchlist").split(',').filter { it.isNotBlank() }.toSet(),
             appOrder = s("appOrder").split(',').filter { it.isNotBlank() },
             hiddenApps = s("hiddenApps").split(',').filter { it.isNotBlank() }.toSet(),
+            rowOrder = s("rowOrder").split(',').filter { it.isNotBlank() },
+            hiddenRows = s("hiddenRows").split(',').filter { it.isNotBlank() }.toSet(),
             setupToken = s("setupToken"),
         )
     }
@@ -263,6 +266,7 @@ class SettingsStore(context: Context) {
             putString("region", v.region)
             putString("tmdbKey", v.tmdbKey)
             putString("omdbKey", v.omdbKey)
+            putString("watchmodeKey", v.watchmodeKey)
             putString("routesKey", v.routesKey)
             putString("youtubeClientId", v.youtubeClientId)
             putString("youtubeClientSecret", v.youtubeClientSecret)
@@ -280,9 +284,11 @@ class SettingsStore(context: Context) {
             putString("previewPlace", v.previewPlace)
             putString("calendarUrls", v.calendarUrls.joinToString("\n"))
             putInt("travelBufferMinutes", v.travelBufferMinutes)
-            putString("watchlist", v.watchlist.joinToString(","))
+            remove("watchlist") // retired feature
             putString("appOrder", v.appOrder.joinToString(","))
             putString("hiddenApps", v.hiddenApps.joinToString(","))
+            putString("rowOrder", v.rowOrder.joinToString(","))
+            putString("hiddenRows", v.hiddenRows.joinToString(","))
             putString("setupToken", v.setupToken)
         }.apply()
     }

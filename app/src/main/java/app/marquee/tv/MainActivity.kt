@@ -22,6 +22,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.marquee.tv.data.Title
 import app.marquee.tv.ui.MarqueeVm
 import app.marquee.tv.ui.detail.DetailScreen
@@ -141,5 +145,32 @@ private fun Root(vm: MarqueeVm, nav: Nav) {
         }
         }
         app.marquee.tv.ui.components.CardZoomOverlay()
+        PerfCheckOverlay(nav)
+    }
+}
+
+/** While the performance check runs: a small countdown in the corner; when it's done, the results page opens. */
+@Composable
+private fun PerfCheckOverlay(nav: Nav) {
+    val phase by app.marquee.tv.system.PerfCheck.phase.collectAsState()
+    when (val p = phase) {
+        is app.marquee.tv.system.PerfCheck.Phase.Running -> {
+            var left by remember { androidx.compose.runtime.mutableIntStateOf(app.marquee.tv.system.PerfCheck.SECONDS) }
+            LaunchedEffect(p.endsAt) {
+                while (true) { left = ((p.endsAt - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0); kotlinx.coroutines.delay(500) }
+            }
+            Box(Modifier.fillMaxSize()) {
+                androidx.tv.material3.Text(
+                    "Performance check · $left s · keep scrolling up and down",
+                    style = app.marquee.tv.ui.theme.T.sans(11.sp, androidx.compose.ui.text.font.FontWeight.Bold, C.Ink),
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 10.dp)
+                        .background(C.Amber, androidx.compose.foundation.shape.RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
+        }
+        is app.marquee.tv.system.PerfCheck.Phase.Done -> LaunchedEffect(p) {
+            if ((nav.top as? Screen.Settings)?.section != "perf") nav.go(Screen.Settings("perf"))
+        }
+        else -> Unit
     }
 }

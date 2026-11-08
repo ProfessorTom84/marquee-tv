@@ -154,4 +154,39 @@ class FeedLayoutTest {
         assertEquals(2, firstSix(FeedBalance.BALANCED))
         assertEquals(1, firstSix(FeedBalance.MORE_SERVICES))
     }
+
+    // ---------------- Your own row order (Settings → Home rows) ----------------
+
+    @Test fun yourOrderGroupsRowsTogetherWithForYouFirst() {
+        val order = listOf(FeedLayout.RowGroup.MOODS, FeedLayout.RowGroup.SERVICES, FeedLayout.RowGroup.CONTINUE)
+        val out = FeedLayout.arrange(allRows(), FeedBalance.BALANCED, 0, order = order).map { it.key }
+        assertEquals(FeedLayout.FOR_YOU, out.first())
+        val groups = out.drop(1).map { FeedLayout.groupOf(it) }
+        // Moods, then services, then continue watching; groups you didn't place follow in their usual order.
+        val firstOf = { g: FeedLayout.RowGroup -> groups.indexOf(g) }
+        val lastOf = { g: FeedLayout.RowGroup -> groups.lastIndexOf(g) }
+        assertTrue(lastOf(FeedLayout.RowGroup.MOODS) < firstOf(FeedLayout.RowGroup.SERVICES))
+        assertTrue(lastOf(FeedLayout.RowGroup.SERVICES) < firstOf(FeedLayout.RowGroup.CONTINUE))
+        assertTrue(firstOf(FeedLayout.RowGroup.CONTINUE) < firstOf(FeedLayout.RowGroup.SEASONAL))
+        // Same rows as the mix, just rearranged.
+        assertEquals(FeedLayout.arrange(allRows(), FeedBalance.BALANCED, 0).map { it.key }.toSet(), out.toSet())
+    }
+
+    @Test fun hiddenGroupsNeverShow() {
+        val hidden = setOf(FeedLayout.RowGroup.YOUTUBE, FeedLayout.RowGroup.BECAUSE, FeedLayout.RowGroup.CONTINUE)
+        listOf(emptyList(), FeedLayout.defaultOrder(FeedBalance.BALANCED)).forEach { order ->
+            val out = FeedLayout.arrange(allRows(), FeedBalance.BALANCED, 3, order = order, hidden = hidden)
+            assertTrue(out.none { FeedLayout.groupOf(it.key) in hidden })
+            assertEquals(FeedLayout.FOR_YOU, out.first().key)
+            assertTrue(plexRows(out) <= 2)
+        }
+    }
+
+    @Test fun defaultOrderCoversEveryGroupOnce() {
+        FeedBalance.entries.forEach { b ->
+            val d = FeedLayout.defaultOrder(b)
+            assertEquals(FeedLayout.RowGroup.entries.toSet(), d.toSet())
+            assertEquals(d.size, d.distinct().size)
+        }
+    }
 }

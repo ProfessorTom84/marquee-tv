@@ -49,12 +49,18 @@ object Updater {
     fun start(app: MarqueeApp) {
         if (started) return
         started = true
-        // Install a waiting update as soon as the TV goes idle.
+        // A waiting update installs overnight while the TV is idle (see [OVERNIGHT]); screen-off during that window
+        // (or after two days of waiting) also counts.
         val idle = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) { if (state.value.phase == Phase.READY && app.store.value.autoUpdate) install(app) }
+            override fun onReceive(c: Context, i: Intent) {
+                val f = ready ?: return
+                if (state.value.phase == Phase.READY && app.store.value.autoUpdate && (isOvernight() || waitedTooLong(f))) install(app)
+            }
         }
         val f = IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_DREAMING_STARTED) }
         if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(idle, f, Context.RECEIVER_EXPORTED) else app.registerReceiver(idle, f)
+        // An update downloaded before Marquee restarted (or the TV rebooted) is still waiting on disk.
+        scope.launch { runCatching { restorePending(app) } }
         scope.launch {
             delay(90_000)
             while (true) {
@@ -134,9 +140,10 @@ object Updater {
             }
             verify(app, file)
             ready = file
-            state.value = state.value.copy(phase = Phase.READY, message = "Version $latest is ready. Install now, or it installs when the TV is idle.")
+            state.value = state.value.copy(phase = Phase.READY, message = readyMessage(latest))
+            scheduleOvernight(app)
             val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isInteractive && s.autoUpdate) install(app)
+            if (!pm.isInteractive && s.autoUpdate && isOvernight()) install(app)
         } catch (e: kotlinx.coroutines.CancellationException) {
             state.value = state.value.copy(phase = Phase.IDLE, message = "Check stopped. Try again.")
             throw e
@@ -157,11 +164,65 @@ object Updater {
         if (mine == null || theirs == null || mine != theirs) error("The download isn't signed by you, so it wasn't installed")
     }
 
+    // ---------------- Overnight installs ----------------
+    // Right after an update Android runs Marquee unoptimised until its idle-time optimisation, which made scrolling
+    // choppy for the rest of the day. Installing in the small hours gives Android the night to optimise it first.
+
+    /** 2:00–4:59 AM, local time. */
+    fun isOvernight(hour: Int = java.time.LocalTime.now().hour) = hour in 2..4
+
+    /** If the TV is never idle overnight (always on, or unplugged), don't hold an update back for ever. */
+    private fun waitedTooLong(f: File) = System.currentTimeMillis() - f.lastModified() > 48 * 60 * 60_000L
+
+    private fun readyMessage(v: String) = "Version $v is ready. It installs overnight while the TV is idle, or press Install now."
+
+    /** Next 2:30 AM (an inexact alarm that may fire up to a couple of hours later, which is fine). */
+    private fun nextOvernight(now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): Long {
+        var t = now.withHour(2).withMinute(30).withSecond(0).withNano(0)
+        if (!t.isAfter(now)) t = t.plusDays(1)
+        return t.toInstant().toEpochMilli()
+    }
+
+    fun scheduleOvernight(ctx: Context) {
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+        val pi = PendingIntent.getBroadcast(ctx, 7, Intent(ctx, OvernightInstallReceiver::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        // Allowed while the TV is in its deep standby; wakes it just long enough to install.
+        am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, nextOvernight(), pi)
+    }
+
+    /** Finds a verified, newer download left from before a restart and puts it back in the READY state. */
+    @Synchronized
+    private fun restorePending(app: MarqueeApp) {
+        if (ready != null) return
+        val f = File(app.filesDir, "updates").listFiles()?.filter { it.name.endsWith(".apk") }?.maxByOrNull { it.lastModified() } ?: return
+        try { verify(app, f) } catch (_: Exception) { f.delete(); return }
+        val v = f.name.removePrefix("marquee-").removeSuffix(".apk")
+        ready = f
+        state.value = State(Phase.READY, v, message = readyMessage(v))
+        scheduleOvernight(app)
+    }
+
+    /** The overnight alarm: install now if nobody's watching, otherwise try again tomorrow night. */
+    internal fun onOvernightAlarm(app: MarqueeApp) {
+        restorePending(app)
+        val f = ready ?: return
+        if (!app.store.value.autoUpdate) return
+        val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (pm.isInteractive) { scheduleOvernight(app); return } // the screen-off receiver may still catch it before 5 AM
+        if (state.value.phase == Phase.READY) installNow(app, f)
+    }
+
     fun install(app: MarqueeApp) {
         val file = ready ?: return
         if (state.value.phase == Phase.INSTALLING) return
+        scope.launch { installNow(app, file) }
+    }
+
+    /** Blocking: writes the APK into an install session and commits it. Call off the main thread. */
+    private fun installNow(app: MarqueeApp, file: File) {
+        if (state.value.phase == Phase.INSTALLING) return
         state.value = state.value.copy(phase = Phase.INSTALLING, message = "Installing…", since = System.currentTimeMillis())
-        scope.launch {
+        run {
             try {
                 val installer = app.packageManager.packageInstaller
                 val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
@@ -207,6 +268,17 @@ object Updater {
             m.contains("404") -> "Repo or release not found. Check the repo name and that the token can read it."
             else -> m
         }
+    }
+}
+
+/** Fires around 2:30 AM when an update is waiting (see [Updater.scheduleOvernight]). */
+class OvernightInstallReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) {
+        val app = c.applicationContext as? MarqueeApp ?: return
+        val done = goAsync()
+        Thread {
+            try { Updater.onOvernightAlarm(app) } catch (_: Throwable) {} finally { done.finish() }
+        }.start()
     }
 }
 

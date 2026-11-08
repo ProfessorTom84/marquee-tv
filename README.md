@@ -11,6 +11,8 @@ Marquee replaces the Google TV home screen with one built around what you alread
   - **Mood and genre rows** ("Easy comedies", "Gripping thrillers", "Under 90 minutes"…) mix all your services; Plex fills gaps instead of leading.
   - **Plex gets two rows:** Continue watching, and one rotating **From your Plex** row (Plex's own hubs, a collection spotlight and recently added, merged), which favours new and unwatched titles.
   - **Feed balance** (Settings → Your services, or the phone setup page): More Plex, Balanced or More services. It applies to the rows and to Pick Together.
+  - **Your own row order** (Settings → Home rows): move row groups earlier or later, or hide them. "For you" always comes first; "Back to Marquee's mix" restores the default.
+- **Play opens the title itself** in Netflix, Max, Disney+ and your other apps when you add a free Watchmode key. Without one, Marquee opens the app and tells you what to search for.
 - **Calendar with leave-now alerts:** reads your Google Calendar's private iCal link, checks live traffic, and shows a "time to leave" card over whatever is playing, with a QR code for directions on your phone.
 - **TizenTube (or SmartTube) instead of YouTube:** your preferred YouTube app replaces YouTube everywhere, including the remote's YouTube button. "New from your subscriptions" opens there.
 - **Ribbons that change over time:**
@@ -20,6 +22,7 @@ Marquee replaces the Google TV home screen with one built around what you alread
   - **How seasonal picks are chosen:** your own Plex collections by name (e.g. "Halloween"), then library titles tagged on TMDB (e.g. *halloween*), then genres, then titles included with your services.
 - **Plezy support:** play your Plex library in Plezy instead of the Plex app, using Plezy's `plezy://play` links. It can also open Plezy wherever the Plex app would open.
 - **"What should we watch?"** A mood, length and type picker. It uses plain filters and ratings, no AI.
+- **Performance check** (Settings → Performance check): scroll the home screen for 20 seconds and Marquee reports how smooth it was, where any slowdown comes from, and whether Android has optimised it since the last update. The result also shows on the phone setup page.
 
 No AI is used anywhere in this version.
 
@@ -31,7 +34,7 @@ Marquee updates itself from this repo's **Releases**:
 
 1. Bump `versionName` / `versionCode` in `app/build.gradle.kts` and push to `main`. That's all: no tag needed.
 2. The **Release** workflow notices the new version, tests, builds and signs the APK (the signing key is the `MARQUEE_KEYSTORE_B64` secret, never committed) and publishes it as release `v<version>`, creating the tag. Pushes that don't change the version don't release anything. (Pushing a `v*` tag, or creating a release on github.com, also still works.)
-3. Each TV checks every few hours with its read-only token, verifies the APK is Marquee signed with the same key and newer, then installs it **while the TV is idle** (screen off or screensaver). Settings → Updates shows the status and has *Check now* / *Install now*.
+3. Each TV checks every few hours with its read-only token, verifies the APK is Marquee signed with the same key and newer, then installs it **overnight while the TV is idle** (around 2:30–5 AM, so Android can optimise it before you next watch; after two days of waiting it takes the next idle moment). Settings → Updates shows the status and has *Check now* / *Install now*.
 
 Each TV needs, once: the repo name and a fine-grained, read-only token (this repo only, *Contents: Read*) on its phone setup page, and Marquee installed with itself as installer (`pm install -i app.marquee.tv`) so updates need no confirmation.
 
@@ -93,6 +96,7 @@ Open Marquee → **Settings → Accounts & setup** and scan the QR code. Your ph
 | Your services | tick the ones you pay for | everything |
 | TMDB key (free) | themoviedb.org → Settings → API | trending, where to watch, artwork |
 | OMDb key (optional, free tier) | omdbapi.com | IMDb and Rotten Tomatoes scores |
+| Watchmode key (optional, free tier) | api.watchmode.com | Play opens the title itself inside Netflix and other apps |
 | City | type it | weather |
 | Calendar iCal link | Google Calendar on a computer → Settings → your calendar → Integrate calendar → **Secret address in iCal format** | agenda and alerts |
 | Home address + Google Routes API key | Google Cloud console → enable **Routes API** → create an API key | live-traffic "leave by" times |
@@ -116,7 +120,7 @@ Then, on the TV:
 
 ## Known limits
 
-- **Opening streaming titles:** Marquee opens the service's app and shows the title name. Jumping straight to a title inside Netflix and similar apps needs per-service IDs that TMDB doesn't provide. A Watchmode key would add this later.
+- **Opening streaming titles:** with a Watchmode key, Play opens the title inside the service's app. It depends on the app accepting the link, which most do; if one doesn't, or Watchmode doesn't know the title, Marquee opens the app and shows the title name to search for. Watchmode's dedicated Android TV links are only on its paid plans, so the free plan uses its regular app and web links.
 - **Plex deep link:** playback in the Plex app uses a deep link. If your Plex app version ignores it, Marquee opens Plex instead.
 - **Plezy links:** opening a title directly uses Plezy's `plezy://play` links. These are only in recent Plezy versions; older ones simply open the app.
 - **Seasonal ribbons:** a ribbon only appears once it has at least four titles. With a small library and few services, some seasons may not show up.
