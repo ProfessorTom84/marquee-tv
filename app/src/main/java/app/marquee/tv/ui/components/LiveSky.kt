@@ -690,21 +690,6 @@ private fun SkyContent(
     val wet = weather == Sky.RAIN || weather == Sky.STORM
     val wind = (windKph / 40.0).coerceIn(0.0, 1.0).toFloat()
     val moving = animate && !inspection
-    val lively = wet || weather == Sky.SNOW || seasonFor(date, latitude) == Season.AUTUMN || seasonFor(date, latitude) == Season.SPRING
-    val fps = if (lively) 33L else 50L
-    val time by produceState(SkyRendering.stillTime, moving) {
-        if (!moving) return@produceState
-        var last = withFrameMillis { it }
-        while (true) {
-            // Hold still while you're moving around with the remote, then carry on from the same moment.
-            if (Browsing.active) {
-                androidx.compose.runtime.snapshotFlow { Browsing.active }.first { !it }
-                last = withFrameMillis { it }
-            }
-            withFrameMillis { if (it - last >= fps) { value += (it - last) / 1000f; last = it } }
-        }
-    }
-
     val drops = remember(wet) {
         if (!wet) emptyList() else {
             val r = Random(3)
@@ -723,73 +708,120 @@ private fun SkyContent(
     val nightBucket = (look.night * 4).toInt()
     val life = remember(season, weather, nightBucket, animate) { if (animate) SeasonalLife.pick(season, weather, look.night) else SeasonalLife.pick(Season.WINTER, Sky.SNOW, 0f) }
     val twinklers = remember(stars) { stars.filter { it.a > 0.55f && it.y < 0.55f }.take(26) }
+    val twinkle = look.night > 0.3f && (weather == Sky.CLEAR || weather == Sky.PARTLY)
+    val storm = weather == Sky.STORM && animate
+    val particles = drops.isNotEmpty() || flakes.isNotEmpty() || life.active || twinkle || storm
 
-    // One offscreen layer: between the sky's own ticks (and all the while it holds still during browsing) the
-    // whole sky is a single cached texture, instead of a base, cloud layers and particles drawn every frame.
-    Canvas(Modifier.fillMaxSize().graphicsLayer { clip = true; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }) {
-        val w = size.width; val h = size.height
-        val sc = h / 1080f
-        val prev = previous
-        val fade = if (prev == null) 1f else ((System.nanoTime() - fadeStart) / (fadeMs * 1e6f)).coerceIn(0f, 1f)
-        if (prev?.base != null && fade < 1f) drawImage(prev.base)
-        if (base != null) drawImage(base, alpha = if (prev?.base != null) fade else 1f)
-        else if (prev?.base == null) drawRect(Brush.verticalGradient(0f to look.pal.zenith, 0.42f to look.pal.upper, 0.78f to look.pal.lower, 1f to look.pal.horizon))
+    // The sky is drawn in parts that change at different speeds, each refreshed only as often as it needs:
+    // the base (colours, stars, sun) only when the light changes; the clouds, which drift a few pixels a second,
+    // 6 times a second; rain, snow, leaves, twinkling stars and lightning 20 times a second. All of it holds
+    // still while you're moving around with the remote.
+    val cloudTime by skyClock(166L, moving)
+    val time by skyClock(50L, moving && particles)
+    // The slow cross-fade when the light is re-painted (every couple of minutes).
+    val fade by produceState(1f, fadeStart, previous) {
+        if (previous == null) { value = 1f; return@produceState }
+        while (true) {
+            val f = ((System.nanoTime() - fadeStart) / (fadeMs * 1e6f)).coerceIn(0f, 1f)
+            value = f
+            if (f >= 1f) break
+            kotlinx.coroutines.delay(80)
+        }
+    }
 
-        // Twinkle: a few bright stars breathe a little.
-        if (look.night > 0.3f && (weather == Sky.CLEAR || weather == Sky.PARTLY)) twinklers.forEachIndexed { i, s ->
-            val a = ((sin(time * (0.8f + i % 5 * 0.23f) + i * 1.7f) + 1f) / 2f) * 0.5f * look.night
-            drawCircle(s.c.copy(alpha = a), max(0.8f, s.r * sc * 1.3f), Offset(s.x * w, s.y * h))
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().graphicsLayer {
+        clip = true
+        // While you scroll (or for a still sky) the whole sky is one cached picture. While it animates, the parts
+        // draw straight to the screen instead: one full-screen pass per update rather than two.
+        compositingStrategy = if (!moving || Browsing.active) androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+            else androidx.compose.ui.graphics.CompositingStrategy.Auto
+    }) {
+        // Base.
+        Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+            val prev = previous
+            if (prev?.base != null && fade < 1f) drawImage(prev.base)
+            if (base != null) drawImage(base, alpha = if (prev?.base != null) fade else 1f)
+            else if (prev?.base == null) drawRect(Brush.verticalGradient(0f to look.pal.zenith, 0.42f to look.pal.upper, 0.78f to look.pal.lower, 1f to look.pal.horizon))
         }
 
         // Clouds: each texture spans two screen widths and wraps.
-        val layers = if (prev != null && fade < 1f) prev.clouds.map { it to (1f - fade) } + clouds.map { it to fade } else clouds.map { it to 1f }
-        layers.forEach { (l, la) ->
-            val off = ((time * l.speed * (1f + wind * 2f)) % l.period)
-            for (copy in 0..1) {
-                val x = -off + copy * l.period
-                if (x > w || x + l.period < 0f) continue
-                translate(left = x) {
-                    drawImage(l.image, dstOffset = IntOffset(0, l.top.toInt()), dstSize = IntSize(l.period.toInt(), l.height.toInt()), alpha = la, filterQuality = FilterQuality.Low)
+        if (clouds.isNotEmpty() || previous?.clouds?.isNotEmpty() == true) Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+            val w = size.width
+            val prev = previous
+            val layers = if (prev != null && fade < 1f) prev.clouds.map { it to (1f - fade) } + clouds.map { it to fade } else clouds.map { it to 1f }
+            layers.forEach { (l, la) ->
+                val off = ((cloudTime * l.speed * (1f + wind * 2f)) % l.period)
+                for (copy in 0..1) {
+                    val x = -off + copy * l.period
+                    if (x > w || x + l.period < 0f) continue
+                    translate(left = x) {
+                        drawImage(l.image, dstOffset = IntOffset(0, l.top.toInt()), dstSize = IntSize(l.period.toInt(), l.height.toInt()), alpha = la, filterQuality = FilterQuality.Low)
+                    }
                 }
             }
         }
 
-        // Storms: the cloud deck lights up from inside, and a forked bolt drops from the cloud base.
-        if (weather == Sky.STORM && animate) {
-            val (slot, k, t) = stormCycle(time)
-            if (k > 0f) {
-                val bolt = boltPath(slot, w, h)
-                if (t < 0.24f) drawBolt(bolt, k)
-                val o = Offset(w * (0.18f + Random(slot).nextFloat() * 0.64f), h * 0.18f)
-                drawCircle(Brush.radialGradient(listOf(Color(0xFFDDE6FF).copy(alpha = 0.38f * k), Color.Transparent), o, w * 0.5f), w * 0.5f, o)
+        // Particles: twinkling stars, lightning, rain, snow, and seasonal life (leaves, petals or fireflies).
+        if (particles) Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+            val w = size.width; val h = size.height
+            val sc = h / 1080f
+            if (twinkle) twinklers.forEachIndexed { i, s ->
+                val a = ((sin(time * (0.8f + i % 5 * 0.23f) + i * 1.7f) + 1f) / 2f) * 0.5f * look.night
+                drawCircle(s.c.copy(alpha = a), max(0.8f, s.r * sc * 1.3f), Offset(s.x * w, s.y * h))
             }
-        }
-
-        // Rain: two depths of fine streaks, slanted by the wind, fading where the scrim darkens.
-        if (drops.isNotEmpty()) {
-            val slant = 0.12f + wind * 0.35f
-            drops.forEach { d ->
-                val y = ((d.y + time * d.speed) % 1.1f - 0.05f)
-                val x = ((d.x + time * d.speed * slant * 0.3f) % 1f)
-                val len = d.len * h
-                val fade = (1f - y * 0.75f).coerceIn(0f, 1f)
-                drawLine(Color(0xFFCAD6E8).copy(alpha = d.alpha * fade), Offset(x * w, y * h), Offset(x * w - len * slant, y * h + len), strokeWidth = d.width * sc, cap = StrokeCap.Round)
+            // Storms: the cloud deck lights up from inside, and a forked bolt drops from the cloud base.
+            if (storm) {
+                val (slot, k, t) = stormCycle(time)
+                if (k > 0f) {
+                    val bolt = boltPath(slot, w, h)
+                    if (t < 0.24f) drawBolt(bolt, k)
+                    val o = Offset(w * (0.18f + Random(slot).nextFloat() * 0.64f), h * 0.18f)
+                    drawCircle(Brush.radialGradient(listOf(Color(0xFFDDE6FF).copy(alpha = 0.38f * k), Color.Transparent), o, w * 0.5f), w * 0.5f, o)
+                }
             }
-        }
-        // Snow: crisp far flakes, larger near ones, and a few out-of-focus flakes drifting past the lens.
-        if (flakes.isNotEmpty()) flakes.forEach { f ->
-            val y = ((f.y + time * f.speed) % 1.1f - 0.05f)
-            val x = ((f.x * w + sin(time * 0.6f + f.phase) * 22f * sc + time * wind * 40f * sc) % w + w) % w
-            val fade = (1f - y * 0.6f).coerceIn(0f, 1f)
-            if (f.width > 0f) {
-                val r = f.len * sc
-                drawImage(dotSprite, dstOffset = IntOffset((x - r).toInt(), (y * h - r).toInt()), dstSize = IntSize((2 * r).toInt(), (2 * r).toInt()), alpha = f.alpha * fade)
-            } else drawCircle(Color.White.copy(alpha = f.alpha * fade), f.len * sc, Offset(x, y * h))
+            // Rain: two depths of fine streaks, slanted by the wind, fading where the scrim darkens.
+            if (drops.isNotEmpty()) {
+                val slant = 0.12f + wind * 0.35f
+                drops.forEach { d ->
+                    val y = ((d.y + time * d.speed) % 1.1f - 0.05f)
+                    val x = ((d.x + time * d.speed * slant * 0.3f) % 1f)
+                    val len = d.len * h
+                    val f = (1f - y * 0.75f).coerceIn(0f, 1f)
+                    drawLine(Color(0xFFCAD6E8).copy(alpha = d.alpha * f), Offset(x * w, y * h), Offset(x * w - len * slant, y * h + len), strokeWidth = d.width * sc, cap = StrokeCap.Round)
+                }
+            }
+            // Snow: crisp far flakes, larger near ones, and a few out-of-focus flakes drifting past the lens.
+            if (flakes.isNotEmpty()) flakes.forEach { fl ->
+                val y = ((fl.y + time * fl.speed) % 1.1f - 0.05f)
+                val x = ((fl.x * w + sin(time * 0.6f + fl.phase) * 22f * sc + time * wind * 40f * sc) % w + w) % w
+                val f = (1f - y * 0.6f).coerceIn(0f, 1f)
+                if (fl.width > 0f) {
+                    val r = fl.len * sc
+                    drawImage(dotSprite, dstOffset = IntOffset((x - r).toInt(), (y * h - r).toInt()), dstSize = IntSize((2 * r).toInt(), (2 * r).toInt()), alpha = fl.alpha * f)
+                } else drawCircle(Color.White.copy(alpha = fl.alpha * f), fl.len * sc, Offset(x, y * h))
+            }
+            if (life.active) life.draw(this, time, wind, wet, look.night)
         }
 
-        // Seasonal life: leaves (with the rain, if it's raining), petals or fireflies.
-        if (life.active) life.draw(this, time, wind, wet, look.night)
+        // The screen's own scrim (Cinematic's text side), above everything.
+        sideScrim?.let { scrim -> Canvas(Modifier.fillMaxSize().graphicsLayer()) { drawRect(scrim, size = Size(size.width * 0.7f, size.height)) } }
+    }
+}
 
-        sideScrim?.let { drawRect(it, size = Size(w * 0.7f, h)) }
+/**
+ * A sky clock in seconds that ticks every [periodMs] (sleeping in between, not waking every frame), holds still
+ * while you're moving around with the remote, and carries on from the same moment afterwards.
+ */
+@Composable
+private fun skyClock(periodMs: Long, running: Boolean) = produceState(SkyRendering.stillTime, running, periodMs) {
+    if (!running) return@produceState
+    var last = withFrameMillis { it }
+    while (true) {
+        if (Browsing.active) {
+            androidx.compose.runtime.snapshotFlow { Browsing.active }.first { !it }
+            last = withFrameMillis { it }
+        }
+        kotlinx.coroutines.delay(periodMs)
+        withFrameMillis { now -> value += (now - last) / 1000f; last = now }
     }
 }

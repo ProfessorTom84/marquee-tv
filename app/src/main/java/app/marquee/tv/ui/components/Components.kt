@@ -162,7 +162,7 @@ fun PillButton(
 
 @Composable
 fun Chip(text: String, color: Color = C.Text, bg: Color = Color(0x99100C08), modifier: Modifier = Modifier) {
-    Box(modifier.clip(RoundedCornerShape(50)).background(bg).padding(horizontal = 7.dp, vertical = 3.dp)) {
+    Box(modifier.background(bg, RoundedCornerShape(50)).padding(horizontal = 7.dp, vertical = 3.dp)) {
         Text(text, style = T.sans(7.sp, FontWeight.ExtraBold, color, 0.4.sp), maxLines = 1)
     }
 }
@@ -330,15 +330,15 @@ private fun StillsPreview(images: List<String>, onProgress: (Float) -> Unit) {
     }
 }
 
-/** The card's bottom shade combined with its resting dim ([veil] 0 = none), cached in 1% steps. */
-private val shadeCache = arrayOfNulls<Brush>(101)
-private fun cardShade(veil: Float): Brush {
+private val PlaceholderShade = Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xCC000000))
+
+/** Darkens a resting card's picture as it's drawn ([veil] 0 = none), cached in 1% steps; null when not dimmed. */
+private val dimCache = arrayOfNulls<androidx.compose.ui.graphics.ColorFilter>(101)
+private fun cardDim(veil: Float): androidx.compose.ui.graphics.ColorFilter? {
     val i = (veil.coerceIn(0f, 1f) * 100).toInt()
-    return shadeCache[i] ?: run {
-        val v = i / 100f
-        val bottom = 1f - (1f - v) * (1f - 0.8f) // the 80% shade, seen through the veil
-        Brush.verticalGradient(0f to Color.Black.copy(alpha = v), 0.45f to Color.Black.copy(alpha = v), 1f to Color.Black.copy(alpha = bottom))
-    }.also { shadeCache[i] = it }
+    if (i == 0) return null
+    return dimCache[i] ?: androidx.compose.ui.graphics.ColorFilter.lighting(Color(1f - i / 100f, 1f - i / 100f, 1f - i / 100f), Color.Black)
+        .also { dimCache[i] = it }
 }
 
 /** The signature card: lifts, tilts toward you and glows in the art's colour. No autoplay. */
@@ -365,6 +365,24 @@ fun TitleCard(
     // fill per card per frame. (After the 350 ms crossfade, so the sky never shows through mid-fade.)
     var artLoaded by remember(title.id) { mutableStateOf(false) }
     val hideFallback by androidx.compose.runtime.produceState(false, artLoaded) { if (artLoaded) { kotlinx.coroutines.delay(400); value = true } }
+    // The card is baked into one picture (artwork, rounded corners, shade, logo): see CardBake.
+    val plain = PerfCheck.liteLevel >= 2 // the performance check's "plain cards" step
+    val dens = androidx.compose.ui.platform.LocalDensity.current
+    var imgFailed by remember(title.id) { mutableStateOf(false) }
+    val bakeLogo = title.logoUrl.takeIf { title.youtubeId == null && !plain }
+    val painter = coil.compose.rememberAsyncImagePainter(
+        model = remember(title.id, imgFailed, primary, plain, width, height) {
+            val wPx = with(dens) { width.roundToPx() }; val hPx = with(dens) { height.roundToPx() }
+            ImageRequest.Builder(context).data(if (imgFailed) title.posterUrl else primary).size(wPx, hPx)
+                .transformations(CardBake(context, loader, bakeLogo, with(dens) { 11.dp.toPx() }, with(dens) { 12.dp.toPx() }, shade = !plain))
+                .build()
+        },
+        onError = { if (!imgFailed && title.posterUrl != null && title.posterUrl != primary) imgFailed = true },
+        onSuccess = { artLoaded = true },
+    )
+    // The title shows as text unless its logo was baked into the picture.
+    val logoBaked = artLoaded && bakeLogo != null && CardBake.logoDrawn[bakeLogo] == true
+    val showTitleText = title.youtubeId == null && (bakeLogo == null || (artLoaded && !logoBaked))
 
     // Where the artwork sits on screen, so a click can grow it into the details page (no recomposition: a plain holder).
     val where = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
@@ -393,32 +411,16 @@ fun TitleCard(
                     }
                     // Only the focused card casts a (coloured) shadow; twenty resting shadows cost real GPU time on a TV.
                     .then(if (f) Modifier.shadow(18.dp, shape, ambientColor = glow ?: C.Amber, spotColor = glow ?: C.Amber) else Modifier)
-                    .clip(shape)
-                    .then(if (hideFallback) Modifier else Modifier.background(fallback))
+                    // No clip: the baked picture has its own rounded corners. The placeholder is drawn rounded until it loads.
+                    .then(if (hideFallback) Modifier else Modifier.background(fallback, shape))
+                    // The baked card in one draw. Resting cards are dimmed by a colour filter on that same draw (no
+                    // overlay, no layer alpha); read in the draw phase, so the focus animation never recomposes.
+                    .drawBehind { with(painter) { draw(size, colorFilter = cardDim(1f - alpha)) } }
                     .then(if (f) Modifier.border(2.dp, Color(0xF2FFF0DC), shape) else Modifier),
             ) {
-                var imgFailed by remember(title.id) { mutableStateOf(false) }
-                AsyncImage(
-                    model = if (imgFailed) title.posterUrl else primary,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    onError = { if (!imgFailed && title.posterUrl != null && title.posterUrl != primary) imgFailed = true },
-                    onSuccess = { artLoaded = true },
-                )
-                // One layer does both jobs: the bottom shade that keeps the title readable, and the dimming of resting
-                // cards (not layer alpha, which gave every card its own offscreen buffer). Read in the draw phase only.
-                val plain = PerfCheck.liteLevel >= 2
-                if (!plain) Box(Modifier.fillMaxSize().drawBehind { drawRect(cardShade(1f - alpha)) })
-                var logoFailed by remember(title.logoUrl) { mutableStateOf(false) }
-                if (title.logoUrl != null && !logoFailed && !plain) {
-                    AsyncImage(
-                        model = title.logoUrl, contentDescription = title.title,
-                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).fillMaxWidth(0.62f).height(height * 0.28f),
-                        contentScale = ContentScale.Fit, alignment = Alignment.BottomStart,
-                        onError = { logoFailed = true },
-                    )
-                } else if (title.youtubeId == null) { // video thumbnails carry their own text; the title sits below
+                // Until (or unless) the artwork arrives, the placeholder gets the shade so the title stays readable.
+                if (!artLoaded && !plain) Box(Modifier.fillMaxSize().background(PlaceholderShade, RoundedCornerShape(11.dp)))
+                if (showTitleText) { // video thumbnails carry their own text; the title sits below
                     Text(
                         title.title, style = T.cardTitle, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 11.dp, vertical = 9.dp),
@@ -432,7 +434,7 @@ fun TitleCard(
                 if (title.duration.isNotBlank()) Chip(title.duration, C.Text, Color(0xC0000000), Modifier.align(Alignment.BottomEnd).padding(6.dp))
                 val progress = previewProgress ?: title.progress
                 if (progress != null) {
-                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(2.5.dp).background(Color(0x33FFFFFF))) {
+                    Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp).fillMaxWidth().height(2.5.dp).background(Color(0x33FFFFFF))) {
                         Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(2.5.dp).background(C.Amber))
                     }
                 }
