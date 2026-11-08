@@ -155,13 +155,15 @@ private fun PerfCheckOverlay(nav: Nav) {
     val phase by app.marquee.tv.system.PerfCheck.phase.collectAsState()
     when (val p = phase) {
         is app.marquee.tv.system.PerfCheck.Phase.Running -> {
-            var left by remember { androidx.compose.runtime.mutableIntStateOf(app.marquee.tv.system.PerfCheck.SECONDS) }
-            LaunchedEffect(p.endsAt) {
-                while (true) { left = ((p.endsAt - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0); kotlinx.coroutines.delay(500) }
+            val steps = app.marquee.tv.system.PerfCheck.steps
+            var left by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+            LaunchedEffect(p.stepEndsAt) {
+                while (true) { left = ((p.stepEndsAt - System.currentTimeMillis() + 999) / 1000).toInt().coerceAtLeast(0); kotlinx.coroutines.delay(250) }
             }
+            val what = if (steps[p.step].scroll) "keep scrolling up and down" else "don't press anything"
             Box(Modifier.fillMaxSize()) {
                 androidx.tv.material3.Text(
-                    "Performance check · $left s · keep scrolling up and down",
+                    "Performance check · step ${p.step + 1} of ${steps.size}: $what · $left s",
                     style = app.marquee.tv.ui.theme.T.sans(11.sp, androidx.compose.ui.text.font.FontWeight.Bold, C.Ink),
                     modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 10.dp)
                         .background(C.Amber, androidx.compose.foundation.shape.RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 6.dp),

@@ -41,6 +41,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import app.marquee.tv.system.PerfCheck
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -328,7 +330,16 @@ private fun StillsPreview(images: List<String>, onProgress: (Float) -> Unit) {
     }
 }
 
-private val CardShade = Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xCC000000))
+/** The card's bottom shade combined with its resting dim ([veil] 0 = none), cached in 1% steps. */
+private val shadeCache = arrayOfNulls<Brush>(101)
+private fun cardShade(veil: Float): Brush {
+    val i = (veil.coerceIn(0f, 1f) * 100).toInt()
+    return shadeCache[i] ?: run {
+        val v = i / 100f
+        val bottom = 1f - (1f - v) * (1f - 0.8f) // the 80% shade, seen through the veil
+        Brush.verticalGradient(0f to Color.Black.copy(alpha = v), 0.45f to Color.Black.copy(alpha = v), 1f to Color.Black.copy(alpha = bottom))
+    }.also { shadeCache[i] = it }
+}
 
 /** The signature card: lifts, tilts toward you and glows in the art's colour. No autoplay. */
 @Composable
@@ -383,13 +394,6 @@ fun TitleCard(
                     // Only the focused card casts a (coloured) shadow; twenty resting shadows cost real GPU time on a TV.
                     .then(if (f) Modifier.shadow(18.dp, shape, ambientColor = glow ?: C.Amber, spotColor = glow ?: C.Amber) else Modifier)
                     .clip(shape)
-                    // Resting cards are dimmed with a dark veil, not layer alpha: alpha below 1 renders every card into
-                    // its own offscreen buffer, and two dozen of those per frame is what made scrolling choppy on the TV.
-                    .drawWithContent {
-                        drawContent()
-                        val veil = 1f - alpha
-                        if (veil > 0.004f) drawRect(Color.Black.copy(alpha = veil))
-                    }
                     .then(if (hideFallback) Modifier else Modifier.background(fallback))
                     .then(if (f) Modifier.border(2.dp, Color(0xF2FFF0DC), shape) else Modifier),
             ) {
@@ -402,9 +406,12 @@ fun TitleCard(
                     onError = { if (!imgFailed && title.posterUrl != null && title.posterUrl != primary) imgFailed = true },
                     onSuccess = { artLoaded = true },
                 )
-                Box(Modifier.fillMaxSize().background(CardShade))
+                // One layer does both jobs: the bottom shade that keeps the title readable, and the dimming of resting
+                // cards (not layer alpha, which gave every card its own offscreen buffer). Read in the draw phase only.
+                val plain = PerfCheck.liteLevel >= 2
+                if (!plain) Box(Modifier.fillMaxSize().drawBehind { drawRect(cardShade(1f - alpha)) })
                 var logoFailed by remember(title.logoUrl) { mutableStateOf(false) }
-                if (title.logoUrl != null && !logoFailed) {
+                if (title.logoUrl != null && !logoFailed && !plain) {
                     AsyncImage(
                         model = title.logoUrl, contentDescription = title.title,
                         modifier = Modifier.align(Alignment.BottomStart).padding(12.dp).fillMaxWidth(0.62f).height(height * 0.28f),
@@ -417,7 +424,7 @@ fun TitleCard(
                         modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 11.dp, vertical = 9.dp),
                     )
                 }
-                Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (!plain) Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     title.badge?.let { Chip(it, C.AmberSoft) }
                     if (title.badge == null && title.availability.any { it.kind == app.marquee.tv.data.AvailKind.PLEX } && title.availability.first().quality.contains("4K"))
                         Chip("ON YOUR PLEX · 4K", C.AmberSoft)

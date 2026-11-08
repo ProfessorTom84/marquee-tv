@@ -80,6 +80,8 @@ fun WeatherBackdrop(
     overlay: androidx.compose.ui.graphics.Brush? = null, grain: Boolean = false, sideScrim: androidx.compose.ui.graphics.Brush? = null,
     orbs: Boolean = false, // sun & moon discs only where no UI sits over the sky (Ambient)
 ) {
+    // The performance check's "sky switched off" steps: a plain dark background instead.
+    if (app.marquee.tv.system.PerfCheck.liteLevel >= 1) { Box(modifier.fillMaxSize().background(Color(0xFF07060B))); return }
     val store = androidx.compose.runtime.remember { runCatching { app.marquee.tv.MarqueeApp.instance.store }.getOrNull() }
     val s = store?.state?.collectAsState()?.value
     // Re-read the clock every minute so the sky follows the sun through the day.

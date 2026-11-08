@@ -22,7 +22,7 @@ Marquee replaces the Google TV home screen with one built around what you alread
   - **How seasonal picks are chosen:** your own Plex collections by name (e.g. "Halloween"), then library titles tagged on TMDB (e.g. *halloween*), then genres, then titles included with your services.
 - **Plezy support:** play your Plex library in Plezy instead of the Plex app, using Plezy's `plezy://play` links. It can also open Plezy wherever the Plex app would open.
 - **"What should we watch?"** A mood, length and type picker. It uses plain filters and ratings, no AI.
-- **Performance check** (Settings → Performance check): scroll the home screen for 20 seconds and Marquee reports how smooth it was, where any slowdown comes from, and whether Android has optimised it since the last update. The result also shows on the phone setup page.
+- **Performance check** (Settings → Performance check): about 36 seconds in four steps (hands off, then scrolling as normal, with the sky off, and with plain cards). Marquee reports how smooth it was, what the sky and the card effects cost the graphics chip, whether Android has optimised it since the last update, plus the device, its temperature and memory. The result also shows on the phone setup page.
 
 No AI is used anywhere in this version.
 

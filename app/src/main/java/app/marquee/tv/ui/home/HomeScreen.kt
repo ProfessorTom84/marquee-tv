@@ -230,7 +230,7 @@ private fun DashboardClock(profileName: String, summary: String?) {
 @Composable
 private fun DashboardBackground(mode: String, weather: app.marquee.tv.weather.Weather?, photo: app.marquee.tv.photos.AreaPhoto?) {
     val fade = remember { Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)) }
-    if (mode == "PHOTO" && photo != null) BakedBackdrop(photo.url, remember { listOf(fade) })
+    if (mode == "PHOTO" && photo != null && app.marquee.tv.system.PerfCheck.liteLevel == 0) BakedBackdrop(photo.url, remember { listOf(fade) })
     else WeatherBackdrop(weather, overlay = fade, grain = true)
 }
 

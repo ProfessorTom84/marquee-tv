@@ -230,10 +230,21 @@ private fun PerfSection(vm: MarqueeVm, nav: Nav) {
     val activity = LocalContext.current as? android.app.Activity
     val last = remember(phase) { (phase as? app.marquee.tv.system.PerfCheck.Phase.Done)?.result?.lines() }
     val saved = remember(phase) { if (last == null) check.lastText(vm.app) else null }
-    H("Performance check", "Measures how smoothly the home screen scrolls on this TV. Press Start, then scroll up and down the home screen for ${app.marquee.tv.system.PerfCheck.SECONDS} seconds. The results come back here, and on the phone setup page so you can copy them.")
+    H("Performance check", "Measures how smoothly the home screen scrolls on this TV and what costs the most. It takes about ${app.marquee.tv.system.PerfCheck.SECONDS} seconds in ${app.marquee.tv.system.PerfCheck.steps.size} steps: first don't press anything, then scroll up and down the home screen until it's done (the sky and card effects switch off for a moment while it measures them). Follow the banner at the top. The results come back here, and on the phone setup page so you can copy them.")
     Group {
         PillButton("Start check", primary = true, height = 38.dp) {
-            if (activity != null) { check.start(activity); nav.home() }
+            if (activity != null) {
+                check.start(activity) {
+                    val st = vm.settings.value
+                    val w = vm.weather.value
+                    listOf(
+                        "Home screen" to "${vm.styleNow().label} style · background ${if (st.background == "PHOTO") "photo" else "live sky"} · " +
+                            (w?.let { "${it.sky.name.lowercase()}, ${if (it.isDay) "day" else "night"}" } ?: "no weather") +
+                            " · ${vm.home.value?.rows?.size ?: 0} rows",
+                    )
+                }
+                nav.home()
+            }
         }
         when {
             last != null -> last.forEach { (k, v) -> ValueRow(k, v, onClick = {}) }
