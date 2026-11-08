@@ -714,10 +714,11 @@ private fun SkyContent(
 
     // The sky is drawn in parts that change at different speeds, each refreshed only as often as it needs:
     // the base (colours, stars, sun) only when the light changes; the clouds, which drift a few pixels a second,
-    // 6 times a second; rain, snow, leaves, twinkling stars and lightning 20 times a second. All of it holds
-    // still while you're moving around with the remote.
+    // 6 times a second, holding still while you scroll (too slow to notice); and the falling leaves, rain, snow,
+    // twinkling stars and lightning 30 times a second, which keep going while you scroll: they're small, so
+    // they cost little next to the screen being redrawn for the scroll anyway.
     val cloudTime by skyClock(166L, moving)
-    val time by skyClock(50L, moving && particles)
+    val time by skyClock(33L, moving && particles, pauseWhileBrowsing = false)
     // The slow cross-fade when the light is re-painted (every couple of minutes).
     val fade by produceState(1f, fadeStart, previous) {
         if (previous == null) { value = 1f; return@produceState }
@@ -729,12 +730,11 @@ private fun SkyContent(
         }
     }
 
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().graphicsLayer { clip = true }) {
+    // The base and clouds: one cached picture, re-painted only when the clouds move (6 times a second, or never
+    // while you scroll). Every other frame, including each one for the leaves, just reuses it.
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().graphicsLayer {
-        clip = true
-        // While you scroll (or for a still sky) the whole sky is one cached picture. While it animates, the parts
-        // draw straight to the screen instead: one full-screen pass per update rather than two.
-        compositingStrategy = if (!moving || Browsing.active) androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-            else androidx.compose.ui.graphics.CompositingStrategy.Auto
+        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
     }) {
         // Base.
         Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -761,7 +761,9 @@ private fun SkyContent(
             }
         }
 
-        // Particles: twinkling stars, lightning, rain, snow, and seasonal life (leaves, petals or fireflies).
+    }
+        // Particles, drawn over the cached sky: twinkling stars, lightning, rain, snow, and seasonal life (leaves,
+        // petals or fireflies).
         if (particles) Canvas(Modifier.fillMaxSize().graphicsLayer()) {
             val w = size.width; val h = size.height
             val sc = h / 1080f
@@ -809,15 +811,15 @@ private fun SkyContent(
 }
 
 /**
- * A sky clock in seconds that ticks every [periodMs] (sleeping in between, not waking every frame), holds still
- * while you're moving around with the remote, and carries on from the same moment afterwards.
+ * A sky clock in seconds that ticks every [periodMs] (sleeping in between, not waking every frame). Unless told
+ * otherwise it holds still while you're moving around with the remote, and carries on from the same moment.
  */
 @Composable
-private fun skyClock(periodMs: Long, running: Boolean) = produceState(SkyRendering.stillTime, running, periodMs) {
+private fun skyClock(periodMs: Long, running: Boolean, pauseWhileBrowsing: Boolean = true) = produceState(SkyRendering.stillTime, running, periodMs) {
     if (!running) return@produceState
     var last = withFrameMillis { it }
     while (true) {
-        if (Browsing.active) {
+        if (pauseWhileBrowsing && Browsing.active) {
             androidx.compose.runtime.snapshotFlow { Browsing.active }.first { !it }
             last = withFrameMillis { it }
         }
