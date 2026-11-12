@@ -27,6 +27,7 @@ class MarqueeApp : Application(), ImageLoaderFactory {
     lateinit var stats: WatchStats; private set
     lateinit var apps: Apps; private set
     lateinit var recommender: Recommender; private set
+    lateinit var news: app.marquee.tv.news.NewsRepo; private set
     lateinit var alerts: app.marquee.tv.system.AlertEngine; private set
     var setupServer: SetupServer? = null; private set
 
@@ -48,6 +49,7 @@ class MarqueeApp : Application(), ImageLoaderFactory {
         stats = WatchStats(this)
         apps = Apps(this).also { it.titleLinks = app.marquee.tv.links.TitleLinks(store) }
         recommender = Recommender(store, plex, tmdb, youtube)
+        news = app.marquee.tv.news.NewsRepo(store)
         alerts = app.marquee.tv.system.AlertEngine(store, calendar, traffic)
         app.marquee.tv.system.SelfHeal.ensureAccessibility(this)
         app.marquee.tv.system.Updater.start(this)

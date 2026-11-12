@@ -17,8 +17,8 @@ android {
         buildConfigField("String", "UPDATE_TOKEN", "\"${System.getenv("MARQUEE_UPDATE_TOKEN") ?: ""}\"")
         minSdk = 31
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.15.3"
+        versionCode = 36
+        versionName = "0.16.0"
     }
 
     signingConfigs {

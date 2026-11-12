@@ -3,7 +3,8 @@
 Marquee replaces the Google TV home screen with one built around what you already pay for:
 
 - **No ads, no sponsored rows, no rentals or purchases.** Every pick is on your Plex, included in a subscription you have, or genuinely free. Ad-supported tiers are never recommended.
-- **Three home styles:** Dashboard (weather, calendar, watch-time cards), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day and goes Ambient when idle. It also works as the system screensaver.
+- **Three home styles:** Dashboard (weather, calendar and news headlines), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day.
+- **Your choice of screensaver:** Google TV's own (Google Photos, art…) or Marquee Ambient, for both idle time and Back on the home screen. Settings shows which one Android will actually run and puts it right if it's out of step.
 - **A feed built around your services, with the best of your Plex:**
   - **For you** mixes about 50% your services, 20% Plex, 15% YouTube and 15% continue watching, and never shows the same service twice in a row.
   - **A row for each service** ("New on Netflix", "Popular on Max", "Top 10 on Disney+"). Two or three services rotate in each time you come home, taking turns so no service takes over.
@@ -81,11 +82,13 @@ adb shell settings put secure accessibility_enabled 1
 
 Marquee's accessibility service never reads screen content. It only notices which app came to the front.
 
-Optional: make Marquee's Ambient view the screensaver:
+Recommended: let Marquee keep the TV's screensaver in step with your choice in Marquee (Settings → Home style → Screensaver: Google TV's, such as Google Photos, or Marquee Ambient). This also lets Marquee switch its Home-button service back on after an update:
 
 ```bash
-adb shell settings put secure screensaver_components app.marquee.tv/.system.AmbientDreamService
+adb shell pm grant app.marquee.tv android.permission.WRITE_SECURE_SETTINGS
 ```
+
+Without it, Settings → Home style shows which screensaver Android will run when idle and the command to change it.
 
 ## 3. Set up from your phone
 

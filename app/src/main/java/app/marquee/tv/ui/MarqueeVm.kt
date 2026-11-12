@@ -21,7 +21,8 @@ import app.marquee.tv.system.HealthChecks
 import app.marquee.tv.system.Check
 import app.marquee.tv.recs.Recommender
 import app.marquee.tv.recs.FeedLayout
-import app.marquee.tv.stats.WeekStats
+import app.marquee.tv.news.Headline
+import app.marquee.tv.news.NewsSource
 import app.marquee.tv.system.TvApp
 import app.marquee.tv.system.UpNext
 import app.marquee.tv.weather.Sky
@@ -43,7 +44,7 @@ class MarqueeVm : ViewModel() {
     val home = MutableStateFlow<HomeData?>(null)
     val loading = MutableStateFlow(true)
     val weather = MutableStateFlow<Weather?>(null)
-    val stats = MutableStateFlow<WeekStats?>(null)
+    val headlines = MutableStateFlow<List<Headline>>(emptyList())
     val events = MutableStateFlow<List<CalEvent>>(emptyList())
     val upNext = MutableStateFlow<UpNext?>(null)
     val apps = MutableStateFlow<List<TvApp>>(emptyList())
@@ -70,6 +71,8 @@ class MarqueeVm : ViewModel() {
     private var lastProfile = settings.value.activeProfile
     private var lastBalance = settings.value.feedBalance
     private var lastRowOrder = settings.value.rowOrder
+    private var lastNews = settings.value.newsSource
+    private var lastCity = settings.value.cityName
     private var lastHiddenRows = settings.value.hiddenRows
 
     // (Declared before init: init reads them.)
@@ -99,7 +102,9 @@ class MarqueeVm : ViewModel() {
                     lastRowOrder = s.rowOrder; lastHiddenRows = s.hiddenRows
                     homeBase?.let { home.value = freshen(it, visits) }
                 }
-                if (s.services != lastServices || s.activeProfile != lastProfile || s.feedBalance != lastBalance) refreshHome()
+                val profileChanged = s.activeProfile != lastProfile // read before refreshHome() records it
+                if (s.services != lastServices || profileChanged || s.feedBalance != lastBalance) refreshHome()
+                if (s.newsSource != lastNews || profileChanged || s.cityName != lastCity) { lastNews = s.newsSource; lastCity = s.cityName; refreshNews() }
             }
         }
         // Light refresh loop: clock-driven data every minute, heavy data every 20 minutes.
@@ -109,7 +114,8 @@ class MarqueeVm : ViewModel() {
                 delay(60_000)
                 n++
                 refreshUpNext()
-                if (n % 15 == 0) { refreshWeather(); refreshStats() }
+                if (n % 15 == 0) refreshWeather()
+                if (n % 20 == 0) refreshNews()
                 if (n % 180 == 0) refreshPhoto()
                 if (n % 20 == 0) refreshHome()
                 checkIdle()
@@ -146,7 +152,7 @@ class MarqueeVm : ViewModel() {
     }
 
     fun refreshAll() {
-        refreshHome(); refreshWeather(); refreshStats(); refreshCalendar(); refreshApps(); refreshPhoto()
+        refreshHome(); refreshWeather(); refreshNews(); refreshCalendar(); refreshApps(); refreshPhoto()
     }
 
     fun refreshHome() {
@@ -182,7 +188,12 @@ class MarqueeVm : ViewModel() {
         areaPhoto.value = withContext(Dispatchers.IO) { runCatching { AreaPhotos.forToday(settings.value, weather.value?.elevationM) }.getOrNull() } ?: areaPhoto.value
     }
 
-    fun refreshStats() = viewModelScope.launch { stats.value = withContext(Dispatchers.IO) { runCatching { app.stats.thisWeek() }.getOrNull() } }
+    /** The Dashboard's headlines. Never for kids' profiles. */
+    fun refreshNews() = viewModelScope.launch {
+        val s = settings.value
+        headlines.value = if (s.profile.kidSafe || s.newsSource == NewsSource.OFF) emptyList()
+            else withContext(Dispatchers.IO) { runCatching { app.news.headlines() }.getOrNull() } ?: headlines.value
+    }
 
     fun refreshCalendar() = viewModelScope.launch {
         events.value = withContext(Dispatchers.IO) { runCatching { app.alerts.upcoming() }.getOrDefault(emptyList()) }
@@ -206,7 +217,9 @@ class MarqueeVm : ViewModel() {
 
     private fun checkIdle() {
         val s = settings.value
-        if (s.idleAmbient && System.currentTimeMillis() - lastInput.value > s.idleMinutes * 60_000L) ambientActive.value = true
+        // Only when Marquee Ambient is your screensaver: with Google's chosen, idle time belongs to Google's
+        // screensaver (Google Photos…), which Marquee's own Ambient used to cover up after 10 minutes.
+        if (s.backAction == "AMBIENT" && s.idleAmbient && System.currentTimeMillis() - lastInput.value > s.idleMinutes * 60_000L) ambientActive.value = true
     }
 
     /** Fires when Home is pressed while Marquee is already up: screens jump back to the top. */

@@ -48,6 +48,7 @@ data class Settings(
     val idleMinutes: Int = 10,
     val previews: String = "PLEX", // OFF | PLEX
     val feedBalance: FeedBalance = FeedBalance.BALANCED, // home rows and Pick Together: Plex vs your services
+    val newsSource: app.marquee.tv.news.NewsSource = app.marquee.tv.news.NewsSource.TOP, // the Dashboard's headlines card
     val profiles: List<Profile> = listOf(Profile("Me", "AUTO")),
     val activeProfile: Int = 0,
     // Takeover
@@ -189,6 +190,7 @@ class SettingsStore(context: Context) {
             idleMinutes = sp.getInt("idleMinutes", d.idleMinutes),
             previews = s("previews").ifBlank { d.previews },
             feedBalance = FeedBalance.parse(sp.getString("feedBalance", null)),
+            newsSource = app.marquee.tv.news.NewsSource.parse(sp.getString("newsSource", null)),
             profiles = decodeProfiles(s("profiles")).ifEmpty { d.profiles },
             activeProfile = sp.getInt("activeProfile", 0),
             takeoverHome = sp.getBoolean("takeoverHome", d.takeoverHome),
@@ -248,6 +250,7 @@ class SettingsStore(context: Context) {
             putInt("idleMinutes", v.idleMinutes)
             putString("previews", v.previews)
             putString("feedBalance", v.feedBalance.name)
+            putString("newsSource", v.newsSource.name)
             putString("profiles", encodeProfiles(v.profiles))
             putInt("activeProfile", v.activeProfile)
             putBoolean("takeoverHome", v.takeoverHome)

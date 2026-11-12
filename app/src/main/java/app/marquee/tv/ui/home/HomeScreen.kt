@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -66,7 +67,6 @@ import app.marquee.tv.data.HomeStyle
 import app.marquee.tv.data.Row as DataRow
 import app.marquee.tv.data.Title
 import app.marquee.tv.player.PreviewPlayer
-import app.marquee.tv.stats.WatchStats
 import app.marquee.tv.system.TimeFmt
 import app.marquee.tv.ui.MarqueeVm
 import app.marquee.tv.ui.components.ArtBackdrop
@@ -132,7 +132,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     val s by vm.settings.collectAsState()
     val home by vm.home.collectAsState()
     val weather by vm.weather.collectAsState()
-    val stats by vm.stats.collectAsState()
+    val headlines by vm.headlines.collectAsState()
     val up by vm.upNext.collectAsState()
     val events by vm.events.collectAsState()
     val apps by vm.apps.collectAsState()
@@ -184,13 +184,15 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                 }
                 item(key = "cards", contentType = "cards") {
                     Box {
-                        Row(Modifier.fillMaxWidth().height(112.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             WeatherCard(weather, s.cityName, s.hasLocation, Modifier.width(if (vm.app.calendar.configured || resume != null) 240.dp else 360.dp).fillMaxHeight())
                             when {
                                 vm.app.calendar.configured -> CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
                                 resume != null -> ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
                             }
-                            StatsCard(stats, vm.app.stats.hasPermission(), Modifier.weight(1f).fillMaxHeight())
+                            val news = s.newsSource != app.marquee.tv.news.NewsSource.OFF && !s.profile.kidSafe
+                            if (news) HeadlinesCard(headlines, s.newsSource, s.cityName, Modifier.weight(1f).fillMaxHeight())
+                            else Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -362,33 +364,78 @@ fun CalendarCard(up: app.marquee.tv.system.UpNext?, events: List<app.marquee.tv.
     }
 }
 
+/**
+ * News headlines (free feeds, see NewsFeeds): three at a time, moving on every 15 seconds. OK opens the full list
+ * with a QR code for each story, so you can read it on your phone.
+ */
 @Composable
-fun StatsCard(st: app.marquee.tv.stats.WeekStats?, permitted: Boolean, modifier: Modifier) {
-    Column(modifier.glass().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.SpaceBetween) {
-        Text("WATCHED THIS WEEK", style = T.label)
-        if (st == null) {
-            Text(if (permitted) "Counting…" else "Turn on usage access", style = T.sans(14.sp, FontWeight.Bold))
-            if (!permitted) Text("Settings → Permissions shows the one-line command", style = T.small)
-        } else {
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(WatchStats.formatMinutes(st.totalMinutes), style = T.serif(30.sp))
-                st.changePercent?.let { c ->
-                    Text(if (c <= 0) "${-c}% less than last week" else "$c% more than last week", style = T.sans(9.sp, color = if (c <= 0) C.Good else C.Warn), modifier = Modifier.padding(bottom = 5.dp))
+fun HeadlinesCard(items: List<app.marquee.tv.news.Headline>, source: app.marquee.tv.news.NewsSource, city: String, modifier: Modifier) {
+    var open by remember { mutableStateOf(false) }
+    val perPage = 2
+    val pages = ((items.size + perPage - 1) / perPage).coerceAtLeast(1)
+    val page by androidx.compose.runtime.produceState(0, pages) { while (true) { delay(15_000); value = (value + 1) % pages } }
+    val shown = items.drop((page % pages) * perPage).take(perPage)
+    Focusable(modifier, onClick = { if (items.isNotEmpty()) open = true }) { f ->
+        Column(
+            Modifier.fillMaxSize().glass(stroke = if (f) C.Text else C.Stroke).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("HEADLINES · ${(if (source == app.marquee.tv.news.NewsSource.LOCAL && city.isNotBlank()) city else source.label).uppercase()}",
+                    style = T.label, modifier = Modifier.weight(1f), maxLines = 1)
+                if (f) Text("OK for more", style = T.sans(8.sp, FontWeight.Bold, C.AmberSoft))
+            }
+            when {
+                items.isEmpty() && source == app.marquee.tv.news.NewsSource.LOCAL && city.isBlank() ->
+                    Text("Add your city in Settings for local news", style = T.sans(12.sp, FontWeight.Bold))
+                items.isEmpty() -> Text("Getting the headlines…", style = T.sans(12.sp, FontWeight.Bold))
+                // Two at a time, room to wrap, then the outlet and how long ago.
+                else -> shown.forEach { h ->
+                    Column {
+                        Text(h.title, style = T.sans(11.sp, FontWeight.Bold).copy(lineHeight = 13.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(listOf(h.source, app.marquee.tv.news.NewsFeeds.ago(h.published)).filter { it.isNotBlank() }.joinToString(" · "),
+                            style = T.sans(8.sp, color = C.Cool), maxLines = 1)
+                    }
                 }
             }
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                val max = (st.perDayMinutes.maxOrNull() ?: 1L).coerceAtLeast(1L)
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    st.perDayMinutes.forEachIndexed { i, m ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Box(Modifier.width(10.dp).height((4 + 28f * m / max).dp).clip(RoundedCornerShape(3.dp))
-                                .background(if (i == st.todayIndex) C.Amber else if (m == 0L) Color(0x2EFFFFFF) else C.Blue))
-                            Text("MTWTFSS"[i].toString(), style = T.sans(7.sp, color = C.Cool))
+        }
+    }
+    if (open) HeadlinesDialog(items) { open = false }
+}
+
+@Composable
+private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        var chosen by remember { mutableStateOf(items.firstOrNull()) }
+        val first = remember { androidx.compose.ui.focus.FocusRequester() }
+        LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+        Row(
+            Modifier.padding(40.dp).fillMaxWidth().glass(tint = Color(0xF20B0F1E)).padding(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Headlines", style = T.serif(28.sp), modifier = Modifier.padding(bottom = 6.dp))
+                items.take(10).forEachIndexed { i, h ->
+                    Focusable(
+                        Modifier.fillMaxWidth().then(if (i == 0) Modifier.focusRequester(first) else Modifier),
+                        onClick = { chosen = h }, onFocus = { if (it) chosen = h },
+                    ) { f ->
+                        Column(
+                            Modifier.fillMaxWidth().background(if (f) Color(0x24FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Text(h.title, style = T.sans(12.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(listOf(h.source, app.marquee.tv.news.NewsFeeds.ago(h.published)).filter { it.isNotBlank() }.joinToString(" · "),
+                                style = T.sans(9.sp, color = C.Cool))
                         }
                     }
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    st.top.forEach { a -> Row { Text(a.label, style = T.sans(9.sp, FontWeight.Bold), maxLines = 1); Text("  ${a.percent}%", style = T.sans(9.sp, color = C.Cool)) } }
+            }
+            chosen?.takeIf { it.link.isNotBlank() }?.let { h ->
+                Column(Modifier.width(220.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    app.marquee.tv.ui.components.QrImage(h.link, 200.dp)
+                    Text("Scan to read this story on your phone", style = T.small)
+                    Text("Back to close", style = T.sans(9.sp, FontWeight.Bold, C.AmberSoft))
                 }
             }
         }
@@ -407,7 +454,6 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
     val s by vm.settings.collectAsState()
     val home by vm.home.collectAsState()
     val weather by vm.weather.collectAsState()
-    val stats by vm.stats.collectAsState()
     val up by vm.upNext.collectAsState()
     val events by vm.events.collectAsState()
     val apps by vm.apps.collectAsState()
@@ -457,7 +503,6 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
                         ?: Text(TimeFmt.full(u.event.start), style = T.sans(11.sp, color = C.TextDim))
                     Divider()
                 }
-                stats?.let { Text(WatchStats.formatMinutes(it.totalMinutes), style = T.sans(11.sp, FontWeight.Bold)); Text("this week", style = T.sans(11.sp, color = C.TextDim)); Divider() }
                 ClockText(T.serif(20.sp))
                 ProfileButton(s) { cycleProfile(vm) }
             }

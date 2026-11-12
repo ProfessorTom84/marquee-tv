@@ -129,6 +129,7 @@ class SetupServer(
                 calendarUrls = p["ics"]?.lines()?.map { it.trim() }?.filter { it.startsWith("http") || it.startsWith("webcal") } ?: s.calendarUrls,
                 services = services,
                 feedBalance = p["balance"]?.let { app.marquee.tv.data.FeedBalance.parse(it) } ?: s.feedBalance,
+                newsSource = p["news"]?.let { app.marquee.tv.news.NewsSource.parse(it) } ?: s.newsSource,
                 region = p["region"]?.trim()?.uppercase()?.take(2)?.ifBlank { null } ?: s.region,
                 youtubePackage = p["ytApp"] ?: s.youtubePackage,
                 youtubeChannels = channels ?: s.youtubeChannels,
@@ -190,6 +191,11 @@ $svc
 
 <h2>Profiles</h2>
 ${s.profiles.mapIndexed { i, pr -> "<label for=\"profile_$i\">Profile ${i + 1} name</label><input type=\"text\" id=\"profile_$i\" name=\"profile_$i\" value=\"${esc(pr.name)}\">" }.joinToString("")}
+
+<h2>News headlines</h2><p class="hint">Shown on the Dashboard. From free news feeds; nothing to sign up for.</p>
+<select id="news" name="news">${app.marquee.tv.news.NewsSource.entries.joinToString("") { n ->
+    "<option value=\"${n.name}\" ${if (n == s.newsSource) "selected" else ""}>${esc(n.label)}${if (n == app.marquee.tv.news.NewsSource.LOCAL) " (your city)" else ""}</option>"
+}}</select>
 
 <h2>Weather</h2>
 <label for="city">City</label><input type="text" id="city" name="city" value="${esc(s.cityName)}" placeholder="e.g. Brooklyn">

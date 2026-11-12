@@ -89,7 +89,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         vm.onInput()
         if (resumedBefore) vm.onReturn() else resumedBefore = true
-        vm.refreshStats()
         vm.refreshApps()
     }
 

@@ -208,18 +208,78 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
             app.marquee.tv.ui.components.SoundFx.enabled = !s.uiSounds
         })
         ValueRow(
-            "Back on the home screen", when (s.backAction) { "AMBIENT" -> "Marquee Ambient"; "NONE" -> "Does nothing"; else -> "Google TV screensaver" },
-            sub = when (s.backAction) {
-                "AMBIENT" -> "Clock, weather and the live sky"
-                "NONE" -> "Back just returns to the top"
-                else -> "Your Google TV screensaver (Google Photos, art…). Needs the Marquee accessibility service"
-            },
-            onClick = { store.update { it.copy(backAction = when (it.backAction) { "GOOGLE" -> "AMBIENT"; "AMBIENT" -> "NONE"; else -> "GOOGLE" }) } },
+            "Headlines on the Dashboard",
+            s.newsSource.label + if (s.newsSource == app.marquee.tv.news.NewsSource.LOCAL) " (${s.cityName.ifBlank { "add your city" }})" else "",
+            sub = "Top stories and Near you come from Google News for your country; also BBC News or NPR. Never shown on kids' profiles",
+            onClick = { store.update { it.copy(newsSource = it.newsSource.next()) } },
         )
-        Toggle(s.idleAmbient, "Go Ambient when idle", "Clock, weather and the live sky after a while without input", { store.update { it.copy(idleAmbient = !it.idleAmbient) } })
-        if (s.idleAmbient) ValueRow("Go Ambient when idle for", "${s.idleMinutes} min", onClick = {
+        ScreensaverSettings(vm, s)
+    }
+}
+
+/**
+ * One screensaver choice for both going idle and pressing Back on the home screen, plus what Android itself will
+ * run when idle (its system screensaver), which can be left pointing at Marquee's even after picking Google
+ * Photos in Google TV's settings.
+ */
+@Composable
+private fun ScreensaverSettings(vm: MarqueeVm, s: Settings) {
+    val store = vm.app.store
+    val ctx = LocalContext.current
+    val ss = app.marquee.tv.system.Screensaver
+    var tick by remember { mutableStateOf(0) }
+    val google = remember { ss.google(ctx) }
+    val marquee = remember { ss.marquee(ctx) }
+    val canChange = remember(tick) { ss.canChange(ctx) }
+    val readable = remember(tick) { ss.readable(ctx) }
+    val current = remember(tick, s.backAction) { ss.current(ctx) }
+    val want = when (s.backAction) { "GOOGLE" -> google?.component; "AMBIENT" -> marquee; else -> null }
+    fun applySystem(choice: String) {
+        val target = when (choice) { "GOOGLE" -> google?.component; "AMBIENT" -> marquee; else -> null } ?: return
+        if (ss.canChange(ctx)) ss.use(ctx, target)
+        tick++
+    }
+    ValueRow(
+        "Screensaver", when (s.backAction) { "AMBIENT" -> "Marquee Ambient"; "NONE" -> "None"; else -> "Google TV screensaver" },
+        sub = when (s.backAction) {
+            "AMBIENT" -> "Clock, weather and the live sky, when the TV is idle and when you press Back on the home screen"
+            "NONE" -> "Back just returns to the top. The TV's own screensaver timer still applies"
+            else -> "Google Photos, art or whatever you've picked in Google TV's settings. It starts after the time set there, and when you press Back on the home screen (needs the Marquee accessibility service)"
+        },
+        onClick = {
+            val next = when (s.backAction) { "GOOGLE" -> "AMBIENT"; "AMBIENT" -> "NONE"; else -> "GOOGLE" }
+            store.update { it.copy(backAction = next) }
+            applySystem(next)
+        },
+    )
+    if (s.backAction == "AMBIENT") {
+        Toggle(s.idleAmbient, "Start Marquee Ambient when idle", "After a while without input", { store.update { it.copy(idleAmbient = !it.idleAmbient) } })
+        if (s.idleAmbient) ValueRow("Start it after", "${s.idleMinutes} min", onClick = {
             val opts = listOf(5, 10, 15, 30, 60); store.update { it.copy(idleMinutes = opts[(opts.indexOf(it.idleMinutes) + 1) % opts.size]) }
         })
+    }
+    // What Android itself runs when the TV is idle.
+    if (want != null) {
+        val ok = current != null && current == want
+        val wantName = if (want == marquee) "Marquee Ambient" else "Google TV's screensaver"
+        Text(
+            when {
+                ok -> "Android's screensaver: ${ss.describe(ctx, current)}. All set."
+                current != null -> "Android is set to run ${ss.describe(ctx, current)} when the TV is idle, not $wantName."
+                readable -> "Android has no screensaver set."
+                else -> "Marquee can't check which screensaver Android runs when idle."
+            },
+            style = T.sans(11.sp, FontWeight.SemiBold, if (ok) C.Good else C.AmberSoft), modifier = Modifier.padding(top = 4.dp),
+        )
+        if (!ok) {
+            if (canChange) PillButton("Use $wantName when idle", primary = true, height = 34.dp) { ss.use(ctx, want); tick++ }
+            else {
+                Text("To fix it, run these once from a computer (or let Marquee do it: the first one lets Marquee change it for you):", style = T.small)
+                Text(ss.GRANT_COMMAND, style = T.sans(10.sp, FontWeight.Bold, C.Text))
+                Text(ss.command(want), style = T.sans(10.sp, FontWeight.Bold, C.Text))
+                PillButton("Check again", height = 30.dp) { tick++ }
+            }
+        }
     }
 }
 
