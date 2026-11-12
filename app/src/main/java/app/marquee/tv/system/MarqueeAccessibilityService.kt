@@ -54,7 +54,10 @@ class MarqueeAccessibilityService : AccessibilityService() {
     private val dreamReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
-                Intent.ACTION_DREAMING_STARTED -> if (stage > 0) { ourDream = true; stage = 0; handler.removeCallbacksAndMessages(null) }
+                Intent.ACTION_DREAMING_STARTED -> if (stage > 0) {
+                    ourDream = true; stage = 0; handler.removeCallbacksAndMessages(null)
+                    hideCurtain(450) // let the screensaver draw its first frame first
+                }
                 Intent.ACTION_DREAMING_STOPPED -> if (ourDream) {
                     ourDream = false; handoffUntil = 0L
                     lastHomeLaunch = SystemClock.elapsedRealtime()
@@ -72,10 +75,40 @@ class MarqueeAccessibilityService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
         handoffUntil = SystemClock.elapsedRealtime() + 7000
         stage = 1
-        if (runCatching { startActivity(home) }.isFailure) { stage = 0; handoffUntil = 0; return false }
+        // Fade to black first, so the Google home screen we pass through on the way is never seen.
+        showCurtain()
+        handler.postDelayed({
+            if (runCatching { startActivity(home) }.isFailure) { stage = 0; handoffUntil = 0; hideCurtain(0); fallbackToAmbient() }
+        }, 220)
         // Safety net: whatever happens, never leave you on the Google home screen.
         handler.postDelayed({ if (stage > 0 && !ourDream) fallbackToAmbient() }, 6500)
         return true
+    }
+
+    // A black cover over everything during the hand-off (it takes no keys or focus, so Back still reaches the
+    // Google home screen underneath). Removed once the screensaver is showing, or if it never starts.
+    private var curtain: View? = null
+
+    private fun showCurtain() {
+        if (curtain != null) return
+        val v = View(this).apply { setBackgroundColor(Color.BLACK); alpha = 0f }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        )
+        runCatching { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).addView(v, lp); curtain = v; v.animate().alpha(1f).setDuration(200).start() }
+        handler.postDelayed({ hideCurtain(0) }, 9000) // never leave the screen black
+    }
+
+    private fun hideCurtain(afterMs: Long) {
+        val v = curtain ?: return
+        val remove = Runnable {
+            if (curtain === v) { curtain = null; runCatching { (getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(v) } }
+        }
+        if (afterMs <= 0) remove.run() else android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(remove, afterMs)
     }
 
     private fun pressBackThere(attempt: Int) {
@@ -88,6 +121,7 @@ class MarqueeAccessibilityService : AccessibilityService() {
 
     private fun fallbackToAmbient() {
         stage = 0; handoffUntil = 0L
+        hideCurtain(300)
         lastHomeLaunch = SystemClock.elapsedRealtime()
         startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_AMBIENT, true).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION))
@@ -118,7 +152,7 @@ class MarqueeAccessibilityService : AccessibilityService() {
             return
         }
         when {
-            s.takeoverHome && pkg in Apps.stockLaunchers -> {
+            s.takeoverHome && pkg in Apps.stockLaunchers && isStockHomeScreen(pkg, event.className?.toString()) -> {
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastHomeLaunch < 800) return
                 lastHomeLaunch = now
@@ -139,6 +173,37 @@ class MarqueeAccessibilityService : AccessibilityService() {
     }
 
     private var homeDownAt = 0L
+
+    // ---- Telling Google TV's home screen apart from its other screens ----
+    // Google TV's Ambient mode settings (choosing Google Photos) and its Google account sign-in are screens of the
+    // same app as its home screen. Marquee used to take over whenever that app came forward, which yanked you out
+    // of those mid-setup. Now it only takes over for the home screen itself.
+    private val launcherScreens = HashMap<String, Pair<Set<String>, Set<String>>>() // package -> (home screens, all screens)
+    private var launcherOnHome = true
+
+    private fun screensOf(pkg: String) = launcherScreens.getOrPut(pkg) {
+        val pm = packageManager
+        val home = runCatching {
+            pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg), android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS)
+                .flatMap { listOfNotNull(it.activityInfo.name, it.activityInfo.targetActivity) }.toSet()
+        }.getOrDefault(emptySet())
+        val all = runCatching {
+            pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_ACTIVITIES).activities.orEmpty()
+                .flatMap { listOfNotNull(it.name, it.targetActivity) }.toSet()
+        }.getOrDefault(emptySet())
+        home to all
+    }
+
+    private fun isStockHomeScreen(pkg: String, cls: String?): Boolean {
+        val (home, all) = screensOf(pkg)
+        if (home.isEmpty()) return true // can't tell: behave as before
+        return when {
+            cls == null -> launcherOnHome
+            cls in home -> { launcherOnHome = true; true }
+            cls in all -> { launcherOnHome = false; false } // its settings, Ambient mode, account sign-in…
+            else -> launcherOnHome // a dialog or panel inside whatever screen is showing
+        }
+    }
 
     /**
      * Catches the Home button itself, before Google TV acts on it, so Marquee opens instantly with no

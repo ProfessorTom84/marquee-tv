@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.drawBehind
 import app.marquee.tv.system.PerfCheck
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -512,7 +513,10 @@ fun MediaRow(
     }
     PinnedRow(48.dp) {
         androidx.compose.foundation.lazy.LazyRow(
-            modifier = modifier,
+            // Moving up or down into a row lands on the card you last had there (already at the left edge, since
+            // rows keep the focused card at the left), or the first card: never a card further along, which made
+            // the row slide sideways and load new artwork right as it scrolled into view.
+            modifier = modifier.focusRestorer(first),
             state = rowState,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 14.dp, bottom = 10.dp),
