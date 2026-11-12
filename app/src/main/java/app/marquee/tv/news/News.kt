@@ -110,6 +110,17 @@ object NewsFeeds {
         else -> national[cat].orEmpty()
     }
 
+    /** Stories from the last [RECENT_HOURS] fill the rows; older ones (never past [OLDEST_HOURS]) only top up a row with fewer than [MIN_ROW]. */
+    const val RECENT_HOURS = 24L
+    const val OLDEST_HOURS = 72L
+    const val MIN_ROW = 4
+
+    /** Splits headlines (already newest first) into the last 24 hours and older. Undated ones count as older. */
+    fun byAge(list: List<Headline>, now: Instant = Instant.now()): Pair<List<Headline>, List<Headline>> {
+        val cut = now.minusSeconds(RECENT_HOURS * 3600)
+        return list.partition { it.published != null && it.published.isAfter(cut) }
+    }
+
     /** Pages that aren't a story to read: videos, rolling live updates, shopping guides. */
     private val notAStory = Regex("/(video|videos|watch|live|live-updates|live-news|live-blog|liveblog|select|shopping|gallery|photos|podcast|podcasts)/", RegexOption.IGNORE_CASE)
     fun isStoryLink(link: String) = link.startsWith("http") && !notAStory.containsMatchIn(link)
@@ -148,16 +159,47 @@ object NewsFeeds {
         return media ?: Regex("<News:Image>(.*?)</News:Image>").find(item)?.groupValues?.get(1)?.let(::clean)
     }
 
-    /** Newest first, one story per subject: when several outlets cover the same thing, keep the first. */
-    fun mix(lists: List<List<Headline>>, max: Int): List<Headline> {
-        val seen = mutableListOf<Set<String>>()
-        return lists.flatten().sortedByDescending { it.published ?: Instant.EPOCH }.filter { h ->
-            val k = subject(h.title)
-            val dup = seen.any { s -> sameSubject(k, s) }
-            if (!dup) seen += k
-            !dup
-        }.take(max)
+    /** Several outlets' headlines as one list, newest first. (Repeats of a topic are dropped later, once a story has read.) */
+    fun mix(lists: List<List<Headline>>, max: Int): List<Headline> =
+        lists.flatten().distinctBy { it.link }.sortedByDescending { it.published ?: Instant.EPOCH }.take(max)
+
+    // ---- One story per topic ----
+    /** Words that say nothing about what a headline is about, or that are in half the day's headlines. */
+    private val commonWords = setOf(
+        "that", "with", "from", "after", "over", "says", "said", "will", "have", "this", "what", "their", "about", "could", "would", "more",
+        "than", "into", "amid", "been", "were", "they", "your", "when", "where", "which", "while", "year", "years", "first", "news", "live",
+        "video", "watch", "update", "updates", "before", "here", "just", "some", "most", "many", "week", "today", "know", "report", "reports",
+        "trump", "president", "white", "house", "senate", "congress", "court", "supreme", "state", "states", "united", "government", "federal",
+        "administration", "police", "officials", "official", "people", "american", "americans", "america", "democrat", "democrats",
+        "republican", "republicans", "city", "county", "national", "world", "plan", "plans", "make", "makes", "show", "shows", "does", "being",
+    )
+
+    /**
+     * What a headline is about: its meaningful words, without [placeWords] (your city and state, which are in most
+     * local headlines). Word endings are folded, so "Huang's" = "Huang", "shooting" = "shoots", "killed" = "killing".
+     */
+    fun topic(title: String, placeWords: Set<String> = emptySet()): Set<String> =
+        title.lowercase().replace(Regex("[’']s\\b"), "").replace(Regex("[^a-z0-9 ]"), " ").split(' ')
+            .filter { it.length > 3 && it !in commonWords && it !in placeWords }
+            .map(::stem).toSet()
+
+    private fun stem(w: String): String {
+        var t = w
+        t = when {
+            t.length > 5 && t.endsWith("ing") -> t.dropLast(3)
+            t.length > 4 && t.endsWith("ed") -> t.dropLast(2)
+            t.length > 4 && t.endsWith("es") -> t.dropLast(2)
+            t.length > 4 && t.endsWith("s") && !t.endsWith("ss") -> t.dropLast(1)
+            else -> t
+        }
+        return if (t.length > 4 && t.endsWith("e")) t.dropLast(1) else t
     }
+
+    /** Two headlines are the same topic when they share two meaningful words ("Jensen" + "Huang", "building" + "collapse"). */
+    fun sameTopic(a: Set<String>, b: Set<String>) = (a intersect b).size >= 2
+
+    fun placeWords(city: String, state: String) =
+        (city + " " + state).lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(' ').filter { it.length > 2 }.toSet()
 
     /** The distinctive words of a headline, to spot the same story told by two outlets. */
     fun subject(title: String) = title.lowercase().replace(Regex("[^a-z0-9 ]"), "").split(' ').filter { it.length > 3 }.take(6).toSet()
@@ -223,13 +265,15 @@ object NewsBuilder {
      * opens at once): anything a site won't serve, paywalls, video-only pages and aggregator pages never appear.
      */
     suspend fun sections(s: Settings, state: String, perCategory: Int = 8): List<NewsSection> = coroutineScope {
-        val fresh = Instant.now().minusSeconds(4L * 24 * 3600)
+        val now = Instant.now()
+        val places = NewsFeeds.placeWords(s.cityName, state)
+        val fresh = now.minusSeconds(NewsFeeds.OLDEST_HOURS * 3600)
         val candidates = NewsCategory.entries.map { cat ->
             async {
                 val lists = NewsFeeds.feedsFor(cat, s, state).map { (label, url) ->
                     async { runCatching { NewsFeeds.parse(Http.getText(url, mapOf("User-Agent" to NewsFeeds.USER_AGENT), cacheMinutes = 20), label) }.getOrDefault(emptyList()) }
                 }.awaitAll()
-                cat to NewsFeeds.mix(lists, 40).filter { NewsFeeds.isStoryLink(it.link) && (it.published == null || it.published.isAfter(fresh)) }
+                cat to NewsFeeds.mix(lists, 60).filter { NewsFeeds.isStoryLink(it.link) && (it.published == null || it.published.isAfter(fresh)) }
             }
         }.awaitAll().toMap()
 
@@ -248,26 +292,49 @@ object NewsBuilder {
         NewsCategory.entries.map { cat ->
             async {
                 val label = when (cat) { NewsCategory.LOCAL -> s.cityName; NewsCategory.STATE -> state; else -> cat.label }
-                NewsSection(cat, label, readable(cat, assigned[cat].orEmpty(), perCategory))
+                // The last 24 hours first. Older stories (up to three days) only top up a row that would be nearly empty.
+                val (today, older) = NewsFeeds.byAge(assigned[cat].orEmpty(), now)
+                val stories = mutableListOf<Story>()
+                readable(cat, today, perCategory, stories, places)
+                if (stories.size < NewsFeeds.MIN_ROW) readable(cat, older, NewsFeeds.MIN_ROW, stories, places)
+                NewsSection(cat, label, stories)
             }
         }.awaitAll().filter { it.stories.isNotEmpty() }
     }
 
-    /** Opens candidates, newest first, until [want] of them have read properly (trying at most twice that many). */
-    private suspend fun readable(cat: NewsCategory, cands: List<Headline>, want: Int): List<Story> = coroutineScope {
-        val out = mutableListOf<Story>()
-        val limit = minOf(cands.size, want * 2)
-        var i = 0
-        while (out.size < want && i < limit) {
-            val batch = cands.subList(i, minOf(i + (want - out.size), limit)); i += batch.size
-            batch.map { h -> async { gate.withPermit { h to ArticleReader.read(h.link) } } }.awaitAll().forEach { (h, a) ->
-                if (a != null) out += Story(
-                    cat, h.title, h.source.takeIf { it != "Local news" && it != "State news" } ?: a.site, h.link, h.published?.toEpochMilli(),
-                    a.heroImage ?: a.blocks.firstOrNull { it.kind == Article.Kind.IMAGE }?.url ?: h.image,
-                    a.blocks.firstOrNull { it.kind == Article.Kind.PARA }?.text.orEmpty().take(260),
-                )
+    /**
+     * Fills [out] up to [want] stories from [cands] (newest first), opening each to make sure it reads properly.
+     * One story per topic: a candidate about something already in the row is skipped, and when the newest story on
+     * a topic can't be read, the next one on that topic gets its turn.
+     */
+    private suspend fun readable(cat: NewsCategory, cands: List<Headline>, want: Int, out: MutableList<Story>, places: Set<String>) = coroutineScope {
+        val have = out.map { NewsFeeds.topic(it.title, places) }.toMutableList()
+        var pending = cands
+        var tried = 0
+        val limit = want * 3
+        while (out.size < want && pending.isNotEmpty() && tried < limit) {
+            val batch = mutableListOf<Pair<Headline, Set<String>>>(); val later = mutableListOf<Headline>()
+            for (h in pending) {
+                val t = NewsFeeds.topic(h.title, places)
+                when {
+                    have.any { NewsFeeds.sameTopic(t, it) } -> Unit // already have this topic
+                    batch.size < want - out.size && batch.none { NewsFeeds.sameTopic(t, it.second) } -> batch += h to t
+                    else -> later += h
+                }
             }
+            if (batch.isEmpty()) break
+            tried += batch.size
+            batch.map { (h, t) -> async { gate.withPermit { Triple(h, t, ArticleReader.read(h.link)) } } }.awaitAll().forEach { (h, t, a) ->
+                if (a != null) {
+                    have += t
+                    out += Story(
+                        cat, h.title, h.source.takeIf { it != "Local news" && it != "State news" } ?: a.site, h.link, h.published?.toEpochMilli(),
+                        a.heroImage ?: a.blocks.firstOrNull { it.kind == Article.Kind.IMAGE }?.url ?: h.image,
+                        a.blocks.firstOrNull { it.kind == Article.Kind.PARA }?.text.orEmpty().take(260),
+                    )
+                }
+            }
+            pending = later
         }
-        out
     }
 }

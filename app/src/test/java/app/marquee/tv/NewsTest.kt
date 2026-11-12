@@ -73,14 +73,33 @@ class NewsTest {
             .forEach { assertTrue(it.name, NewsFeeds.feedsFor(it, brooklyn, "New York").size >= 3) }
     }
 
-    @Test fun mixKeepsOneStoryPerSubjectNewestFirst() {
-        fun h(t: String, min: Long, src: String) = Headline(t, src, "https://example.com/${t.hashCode()}", Instant.parse("2026-11-12T12:00:00Z").plusSeconds(min * 60))
-        val out = NewsFeeds.mix(listOf(
-            listOf(h("Nvidia chief Jensen Huang resigns after scandal", 5, "A"), h("Council approves waterfront park plan", 1, "A")),
-            listOf(h("Jensen Huang resigns as Nvidia chief executive", 9, "B")),
-        ), 10)
-        assertEquals(listOf("B", "A"), out.map { it.source })
-        assertEquals("Council approves waterfront park plan", out[1].title)
+    @Test fun mixIsNewestFirstWithoutRepeatedLinks() {
+        fun h(t: String, min: Long, link: String) = Headline(t, "S", link, Instant.parse("2026-11-12T12:00:00Z").plusSeconds(min * 60))
+        val out = NewsFeeds.mix(listOf(listOf(h("old", 1, "https://a/1"), h("new", 9, "https://a/2")), listOf(h("same link", 5, "https://a/1"))), 10)
+        assertEquals(listOf("new", "old"), out.map { it.title })
+    }
+
+    @Test fun oneStoryPerTopic() {
+        fun same(a: String, b: String, places: Set<String> = emptySet()) = NewsFeeds.sameTopic(NewsFeeds.topic(a, places), NewsFeeds.topic(b, places))
+        // The same person in the news all day.
+        val huang = listOf(
+            "Jensen Huang agrees to testify before Congress", "Five ways Jensen Huang’s ouster from Nvidia could damage the AI industry",
+            "Trump floats Apple chairman Tim Cook as Jensen Huang's successor", "The rise and fall of Jensen Huang - how the tech superstar became mired in scandal",
+            "Nvidia's board preparing to oust CEO Jensen Huang, sources say",
+        )
+        huang.drop(1).forEach { assertTrue(it, same(huang[0], it)) }
+        // One event, many angles.
+        val places = NewsFeeds.placeWords("Brooklyn", "New York")
+        assertTrue(same("Death toll from building collapse in NYC climbs as site excavation begins", "Brooklyn community shaken after \"catastrophic\" building collapse", places))
+        // Two outlets, different wording.
+        assertTrue(same("1 killed, 4 injured in shooting in D.C.'s Logan Circle neighborhood", "Suspected gunman shoots 5 people in D.C., killing 1, before dying by suicide"))
+        assertTrue(same("Historic SS United States sinks off Florida's coast", "Famed ship SS United States deliberately sunk off Florida coast to become a reef"))
+        // Different stories stay, even when they share a company, a place or an everyday word.
+        assertTrue(!same("Whoop just launched a social network", "Norwest pushes deeper into AI with new \$4B fund"))
+        assertTrue(!same("Sharp swings for Nvidia and oil prices weigh on Wall Street", "Company under scrutiny for ties to Nvidia and China"))
+        assertTrue(!same("Death toll from building collapse in NYC climbs", "1 dead, 1 missing and 6 injured after scaffolding collapses on Loop Parkway", places))
+        assertTrue(!same("New York veterans get enhanced support under new laws", "New York students will still take Regents exams", places))
+        assertTrue(!same("Trump administration announces new tariffs", "Trump administration sued over housing rule"))
     }
 
     @Test fun onlyPagesThatAreStories() {
@@ -89,6 +108,15 @@ class NewsTest {
             "https://www.cbsnews.com/video/bolton-reacts/", "https://www.cbsnews.com/newyork/live-updates/collapse/",
             "https://www.nbcnews.com/select/shopping/brands-rcna1", "https://www.cnn.com/2026/11/11/us/live-news/collapse", "ftp://x",
         ).forEach { assertTrue(it, !NewsFeeds.isStoryLink(it)) }
+    }
+
+    @Test fun lastDayComesFirstAndOlderOnlyTopsUp() {
+        val now = Instant.parse("2026-11-12T15:00:00Z")
+        fun h(t: String, hoursAgo: Long?) = Headline(t, "S", "https://example.com/$t", hoursAgo?.let { now.minusSeconds(it * 3600) })
+        val (today, older) = NewsFeeds.byAge(listOf(h("a", 1), h("b", 23), h("c", 25), h("d", 70), h("undated", null)), now)
+        assertEquals(listOf("a", "b"), today.map { it.title })
+        assertEquals(listOf("c", "d", "undated"), older.map { it.title })
+        assertEquals(24L, NewsFeeds.RECENT_HOURS)
     }
 
     @Test fun times() {
