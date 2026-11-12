@@ -38,7 +38,7 @@ import app.marquee.tv.ui.components.SectionHeader
 import app.marquee.tv.ui.components.WeatherBackdrop
 import app.marquee.tv.ui.home.AmbientContent
 import app.marquee.tv.ui.home.CalendarCard
-import app.marquee.tv.ui.home.HeadlinesCard
+import app.marquee.tv.ui.home.NewsCard
 import app.marquee.tv.ui.home.WeatherCard
 import app.marquee.tv.ui.theme.C
 import app.marquee.tv.ui.theme.MarqueeTheme
@@ -71,11 +71,10 @@ class ScreenshotTest {
     private val events = listOf(dinner,
         CalEvent("s", "Kids' soccer", now.plusDays(1).withHour(9).withMinute(0), now.plusDays(1).withHour(10), false, "Prospect Park"),
         CalEvent("f", "Flight to Chicago", now.plusDays(1).withHour(18).withMinute(15), now.plusDays(1).withHour(20), false, "LGA"))
-    private val headlines = listOf(
-        app.marquee.tv.news.Headline("City council approves new waterfront park after two-year fight", "The Local Times", "https://example.com/1", java.time.Instant.now().minusSeconds(14 * 60)),
-        app.marquee.tv.news.Headline("Storm system to bring heavy rain to the coast this weekend", "Weather Desk", "https://example.com/2", java.time.Instant.now().minusSeconds(52 * 60)),
-        app.marquee.tv.news.Headline("Underdogs win in overtime to reach the final", "Sports Daily", "https://example.com/3", java.time.Instant.now().minusSeconds(3 * 3600)),
-    )
+    private val news = listOf(app.marquee.tv.news.NewsSection(app.marquee.tv.news.NewsCategory.LOCAL, "New York", listOf(
+        app.marquee.tv.news.Story(app.marquee.tv.news.NewsCategory.LOCAL, "City council approves new waterfront park after two-year fight", "The Local Times",
+            "https://example.com/1", System.currentTimeMillis() - 14 * 60_000, null, ""),
+    )))
     @Suppress("unused") private val stats = WeekStats(580, 660, listOf(192, 60, 96, 48, 132, 0, 0), 4,
         listOf(AppShare("Plex", "p", 300, 52), AppShare("Netflix", "n", 160, 28), AppShare("TizenTube", "t", 120, 20)))
 
@@ -110,7 +109,7 @@ class ScreenshotTest {
                     Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         WeatherCard(weather, "New York", true, Modifier.width(240.dp).fillMaxHeight())
                         CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
-                        HeadlinesCard(headlines, app.marquee.tv.news.NewsSource.TOP, "", Modifier.weight(1f).fillMaxHeight())
+                        NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
                     }
                     SectionHeader("Tonight for you", "Trending and top-rated · only what you can watch free", Modifier.padding(start = 48.dp, top = 8.dp))
                     MediaRow(picks, 220.dp, 124.dp, onFocus = {}, onClick = {})
@@ -240,7 +239,7 @@ class ScreenshotTest {
                     Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         WeatherCard(weather, "Scarsdale", true, Modifier.width(240.dp).fillMaxHeight())
                         CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
-                        HeadlinesCard(headlines, app.marquee.tv.news.NewsSource.TOP, "", Modifier.weight(1f).fillMaxHeight())
+                        NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
                     }
                     SectionHeader("Tonight for you", "A mix from your Plex, your services and YouTube", Modifier.padding(start = 48.dp, top = 8.dp))
                     MediaRow(picks, 220.dp, 124.dp, onFocus = {}, onClick = {})

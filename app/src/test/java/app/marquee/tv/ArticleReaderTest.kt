@@ -10,7 +10,10 @@ import org.junit.Test
 
 /** Made-up pages shaped like real news sites. */
 class ArticleReaderTest {
-    private val long = "This is a sentence long enough to count as part of the story itself, not a caption."
+    private val long = "This is a sentence long enough to count as part of the story itself, not a caption. " +
+        "It carries on for a while so that four of them add up to a proper article rather than a teaser."
+
+    private fun paras(a: Article) = a.blocks.filter { it.kind == Article.Kind.PARA }.map { it.text }
 
     @Test fun keepsTheStoryAndDropsTheRest() {
         val html = """<html><head><title>T</title>
@@ -30,6 +33,7 @@ class ArticleReaderTest {
               <p>Advertisement</p>
               <p>Stand with free and independent journalism. Join today and support the newsroom.</p>
               <p>Third: $long</p>
+              <p>Fourth: $long</p>
             </div>
             <aside><p>$long (sidebar)</p></aside><footer><p>Copyright 2026 Example News. All rights reserved worldwide.</p></footer>
             </body></html>"""
@@ -38,30 +42,32 @@ class ArticleReaderTest {
         assertEquals("Example News", a.site)
         assertEquals("Jane Doe", a.byline)
         assertEquals("https://example.com/img/hero.jpg", a.heroImage)
-        val paras = a.blocks.filterIsInstance<Article.Block.Para>().map { it.text }
-        assertEquals(3, paras.size)
-        assertTrue(paras.all { it.contains("long enough to count") })
-        assertFalse(paras.any { it.contains("menu") || it.contains("sidebar") || it.startsWith("WATCH") || it.startsWith("Stand with") })
-        assertEquals(Article.Block.Heading("What happens next"), a.blocks.first { it is Article.Block.Heading })
-        val img = a.blocks.filterIsInstance<Article.Block.Image>().single()
+        assertEquals(4, paras(a).size)
+        assertTrue(paras(a).all { it.contains("long enough to count") })
+        assertFalse(paras(a).any { it.contains("menu") || it.contains("sidebar") || it.startsWith("WATCH") || it.startsWith("Stand with") })
+        assertEquals(Article.Block.heading("What happens next"), a.blocks.first { it.kind == Article.Kind.HEADING })
+        val img = a.blocks.single { it.kind == Article.Kind.IMAGE }
         assertEquals("https://example.com/img/inline.jpg", img.url)
-        assertEquals("Rescue crews at the scene", img.caption)
+        assertEquals("Rescue crews at the scene", img.text)
     }
 
-    @Test fun fallsBackToStructuredDataAndGivesUpOnEmptyPages() {
-        val body = (1..4).joinToString("\\n") { "Paragraph $it of the story, which is long enough to keep around." }
+    @Test fun fallsBackToStructuredData() {
+        val body = (1..5).joinToString("\\n") { "Paragraph $it of the story, which is long enough to keep around, and then keeps going so that the whole thing reads like an article and not a caption under a video." }
         val ld = """<html><head><meta property="og:title" content="Scripted page">
             <script type="application/ld+json">[{"@type":"NewsArticle","articleBody":"$body"}]</script></head>
             <body><div id="app"></div></body></html>"""
-        val a = ArticleReader.extract(ld, "https://example.com/s")!!
-        assertEquals(4, a.blocks.count { it is Article.Block.Para })
-        assertNull(ArticleReader.extract("<html><body><p>Too short.</p></body></html>", "https://example.com/x"))
+        assertEquals(5, paras(ArticleReader.extract(ld, "https://example.com/s")!!).size)
     }
 
-    @Test fun bylinesAndLinks() {
+    /** "Only stories that open on the TV": teasers above a paywall and video pages don't count as readable. */
+    @Test fun teasersAndVideoPagesAreNotStories() {
+        assertNull(ArticleReader.extract("<html><body><p>Too short.</p></body></html>", "https://example.com/x"))
+        val teaser = "<html><body><div><p>$long</p><p>$long</p><p>Subscribe to keep reading this story.</p></div></body></html>"
+        assertNull(ArticleReader.extract(teaser, "https://example.com/paywalled"))
+    }
+
+    @Test fun bylines() {
         assertEquals("Associated Press", ArticleReader.cleanByline("By — Associated Press Associated Press"))
         assertEquals("Jane Doe and John Roe", ArticleReader.cleanByline("By: Jane Doe and John Roe"))
-        assertFalse(ArticleReader.canOpen("https://news.google.com/rss/articles/CBMi123?oc=5"))
-        assertTrue(ArticleReader.canOpen("https://www.bbc.co.uk/news/articles/abc"))
     }
 }

@@ -42,10 +42,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.marquee.tv.Nav
 import app.marquee.tv.news.Article
-import app.marquee.tv.news.Headline
+import app.marquee.tv.news.Story
 import app.marquee.tv.news.NewsFeeds
 import app.marquee.tv.ui.MarqueeVm
-import app.marquee.tv.ui.components.QrImage
 import app.marquee.tv.ui.theme.C
 import app.marquee.tv.ui.theme.T
 import coil.compose.AsyncImage
@@ -53,23 +52,22 @@ import kotlinx.coroutines.launch
 
 /**
  * A news story read on the TV: headline, main photo, text, and the pictures and captions from the article.
- * Up and down scroll; Back closes. If the site doesn't allow it (or it's a Google News link), a QR code opens
- * the story on your phone instead.
+ * Up and down scroll; Back closes. The news only lists stories Marquee has already read, so they open at once.
  */
 @Composable
-fun ArticleScreen(vm: MarqueeVm, @Suppress("UNUSED_PARAMETER") nav: Nav, headline: Headline) {
-    var article by remember(headline.link) { mutableStateOf<Article?>(null) }
-    var failed by remember(headline.link) { mutableStateOf(false) }
-    LaunchedEffect(headline.link) {
-        val a = vm.readArticle(headline.link)
+fun ArticleScreen(vm: MarqueeVm, @Suppress("UNUSED_PARAMETER") nav: Nav, story: Story) {
+    var article by remember(story.link) { mutableStateOf<Article?>(null) }
+    var failed by remember(story.link) { mutableStateOf(false) }
+    LaunchedEffect(story.link) {
+        val a = vm.readArticle(story.link)
         if (a == null) failed = true else article = a
     }
-    ArticleContent(headline, article, failed)
+    ArticleContent(story, article, failed)
 }
 
 /** What the reader shows (separate from the loading, so it can be previewed and tested). */
 @Composable
-fun ArticleContent(headline: Headline, article: Article?, failed: Boolean) {
+fun ArticleContent(headline: Story, article: Article?, failed: Boolean) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
@@ -102,19 +100,22 @@ fun ArticleContent(headline: Headline, article: Article?, failed: Boolean) {
                     if (!a?.byline.isNullOrBlank()) Text("By ${a!!.byline}", style = T.sans(12.sp, FontWeight.SemiBold, C.TextDim))
                 }
             }
-            a?.heroImage?.let { hero -> item("hero") { Picture(hero, "", text) } }
+            (a?.heroImage ?: headline.image)?.let { hero -> item("hero") { Picture(hero, "", text) } }
             when {
-                failed -> item("qr") { PhoneLink(headline.link, text, "This story can't be shown on the TV (the site doesn't allow it, or it's behind a paywall). Scan to read it on your phone.") }
+                failed -> item("gone") { Text("This story isn't available right now. Press Back for the other headlines.", style = T.body, modifier = text) }
                 a == null -> item("loading") { Text("Loading the story…", style = T.body, modifier = text) }
                 else -> {
                     items(a.blocks.size) { i ->
-                        when (val b = a.blocks[i]) {
-                            is Article.Block.Para -> Text(b.text, style = T.sans(15.sp, FontWeight.Normal, C.Text).copy(lineHeight = 24.sp), modifier = text)
-                            is Article.Block.Heading -> Text(b.text, style = T.sans(18.sp, FontWeight.ExtraBold), modifier = text.padding(top = 8.dp))
-                            is Article.Block.Image -> Picture(b.url, b.caption, text)
+                        val b = a.blocks[i]
+                        when (b.kind) {
+                            Article.Kind.PARA -> Text(b.text, style = T.sans(15.sp, FontWeight.Normal, C.Text).copy(lineHeight = 24.sp), modifier = text)
+                            Article.Kind.HEADING -> Text(b.text, style = T.sans(18.sp, FontWeight.ExtraBold), modifier = text.padding(top = 8.dp))
+                            Article.Kind.IMAGE -> Picture(b.url, b.text, text)
                         }
                     }
-                    item("end") { PhoneLink(a.url, text, "Story from ${a.site}. Scan to read the original on your phone.") }
+                    item("end") {
+                        Text("— ${a.site.ifBlank { headline.source }} · Back for more headlines", style = T.sans(11.sp, FontWeight.SemiBold, C.TextDim), modifier = text.padding(top = 10.dp))
+                    }
                 }
             }
         }
@@ -134,13 +135,5 @@ private fun Picture(url: String, caption: String, modifier: Modifier) {
             modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(10.dp)),
         )
         if (caption.isNotBlank()) Text(caption, style = T.sans(10.sp, color = C.TextDim))
-    }
-}
-
-@Composable
-private fun PhoneLink(url: String, modifier: Modifier, message: String) {
-    Row(modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-        QrImage(url, 120.dp)
-        Text(message, style = T.body, modifier = Modifier.weight(1f))
     }
 }

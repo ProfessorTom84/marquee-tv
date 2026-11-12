@@ -28,7 +28,7 @@ data class Weather(
     val elevationM: Double? = null,
 )
 
-data class Place(val name: String, val region: String, val lat: Double, val lon: Double)
+data class Place(val name: String, val region: String, val lat: Double, val lon: Double, val state: String = "")
 
 /** Open-Meteo: free, no key, no tracking. */
 object WeatherRepo {
@@ -78,6 +78,7 @@ object WeatherRepo {
                 region = listOfNotNull(it["admin1"].str, it["country_code"].str).joinToString(", "),
                 lat = it["latitude"].dbl ?: 0.0,
                 lon = it["longitude"].dbl ?: 0.0,
+                state = it["admin1"].str ?: "",
             )
         }
     }

@@ -21,9 +21,8 @@ import app.marquee.tv.system.HealthChecks
 import app.marquee.tv.system.Check
 import app.marquee.tv.recs.Recommender
 import app.marquee.tv.recs.FeedLayout
-import app.marquee.tv.news.Headline
+import app.marquee.tv.news.NewsSection
 import app.marquee.tv.news.ArticleReader
-import app.marquee.tv.news.NewsSource
 import app.marquee.tv.system.TvApp
 import app.marquee.tv.system.UpNext
 import app.marquee.tv.weather.Sky
@@ -45,7 +44,9 @@ class MarqueeVm : ViewModel() {
     val home = MutableStateFlow<HomeData?>(null)
     val loading = MutableStateFlow(true)
     val weather = MutableStateFlow<Weather?>(null)
-    val headlines = MutableStateFlow<List<Headline>>(emptyList())
+    val news = MutableStateFlow<List<NewsSection>>(emptyList())
+    private val newsFile = java.io.File(app.filesDir, "news.json")
+    private val newsList = kotlinx.serialization.builtins.ListSerializer(NewsSection.serializer())
     val events = MutableStateFlow<List<CalEvent>>(emptyList())
     val upNext = MutableStateFlow<UpNext?>(null)
     val apps = MutableStateFlow<List<TvApp>>(emptyList())
@@ -72,7 +73,7 @@ class MarqueeVm : ViewModel() {
     private var lastProfile = settings.value.activeProfile
     private var lastBalance = settings.value.feedBalance
     private var lastRowOrder = settings.value.rowOrder
-    private var lastNews = settings.value.newsSource
+    private var lastNews = settings.value.news
     private var lastCity = settings.value.cityName
     private var lastHiddenRows = settings.value.hiddenRows
 
@@ -105,7 +106,7 @@ class MarqueeVm : ViewModel() {
                 }
                 val profileChanged = s.activeProfile != lastProfile // read before refreshHome() records it
                 if (s.services != lastServices || profileChanged || s.feedBalance != lastBalance) refreshHome()
-                if (s.newsSource != lastNews || profileChanged || s.cityName != lastCity) { lastNews = s.newsSource; lastCity = s.cityName; refreshNews() }
+                if (s.news != lastNews || profileChanged || s.cityName != lastCity) { lastNews = s.news; lastCity = s.cityName; refreshNews() }
             }
         }
         // Light refresh loop: clock-driven data every minute, heavy data every 20 minutes.
@@ -189,11 +190,26 @@ class MarqueeVm : ViewModel() {
         areaPhoto.value = withContext(Dispatchers.IO) { runCatching { AreaPhotos.forToday(settings.value, weather.value?.elevationM) }.getOrNull() } ?: areaPhoto.value
     }
 
-    /** The Dashboard's headlines. Never for kids' profiles. */
-    fun refreshNews() = viewModelScope.launch {
-        val s = settings.value
-        headlines.value = if (s.profile.kidSafe || s.newsSource == NewsSource.OFF) emptyList()
-            else withContext(Dispatchers.IO) { runCatching { app.news.headlines() }.getOrNull() } ?: headlines.value
+    private fun newsAllowed() = settings.value.let { it.news && !it.profile.kidSafe }
+    private var newsJob: Job? = null
+
+    /**
+     * The news, by category; every story already read in the background, so it opens on the TV. The last set
+     * shows at once after a restart. Never for kids' profiles.
+     */
+    fun refreshNews() {
+        newsJob?.cancel()
+        if (!newsAllowed()) { news.value = emptyList(); return }
+        newsJob = viewModelScope.launch {
+            if (news.value.isEmpty()) withContext(Dispatchers.IO) {
+                runCatching { Http.json.decodeFromString(newsList, newsFile.readText()) }.getOrNull()
+            }?.let { if (newsAllowed()) news.value = it }
+            val fresh = withContext(Dispatchers.IO) { runCatching { app.news.sections() }.getOrNull() }
+            if (!fresh.isNullOrEmpty() && newsAllowed()) {
+                news.value = fresh
+                withContext(Dispatchers.IO) { runCatching { newsFile.writeText(Http.json.encodeToString(newsList, fresh)) } }
+            }
+        }
     }
 
     fun refreshCalendar() = viewModelScope.launch {

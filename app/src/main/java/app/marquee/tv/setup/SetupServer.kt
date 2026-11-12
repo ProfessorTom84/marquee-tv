@@ -129,7 +129,7 @@ class SetupServer(
                 calendarUrls = p["ics"]?.lines()?.map { it.trim() }?.filter { it.startsWith("http") || it.startsWith("webcal") } ?: s.calendarUrls,
                 services = services,
                 feedBalance = p["balance"]?.let { app.marquee.tv.data.FeedBalance.parse(it) } ?: s.feedBalance,
-                newsSource = p["news"]?.let { app.marquee.tv.news.NewsSource.parse(it) } ?: s.newsSource,
+                news = p["news"]?.let { it == "on" } ?: s.news,
                 region = p["region"]?.trim()?.uppercase()?.take(2)?.ifBlank { null } ?: s.region,
                 youtubePackage = p["ytApp"] ?: s.youtubePackage,
                 youtubeChannels = channels ?: s.youtubeChannels,
@@ -139,6 +139,7 @@ class SetupServer(
                 unsplashKey = p["unsplashKey"]?.trim() ?: s.unsplashKey,
                 useFahrenheit = p["units"] != "c",
                 cityName = place?.name ?: s.cityName,
+                stateName = place?.state ?: s.stateName,
                 latitude = place?.lat ?: s.latitude,
                 longitude = place?.lon ?: s.longitude,
                 profiles = s.profiles.mapIndexed { i, pr -> p["profile_$i"]?.trim()?.takeIf { it.isNotBlank() }?.let { pr.copy(name = it.take(20)) } ?: pr },
@@ -192,10 +193,8 @@ $svc
 <h2>Profiles</h2>
 ${s.profiles.mapIndexed { i, pr -> "<label for=\"profile_$i\">Profile ${i + 1} name</label><input type=\"text\" id=\"profile_$i\" name=\"profile_$i\" value=\"${esc(pr.name)}\">" }.joinToString("")}
 
-<h2>News headlines</h2><p class="hint">Shown on the Dashboard. From free news feeds; nothing to sign up for.</p>
-<select id="news" name="news">${app.marquee.tv.news.NewsSource.entries.joinToString("") { n ->
-    "<option value=\"${n.name}\" ${if (n == s.newsSource) "selected" else ""}>${esc(n.label)}${if (n == app.marquee.tv.news.NewsSource.LOCAL) " (your city)" else ""}</option>"
-}}</select>
+<h2>News</h2><p class="hint">On the Dashboard: local, state and national headlines across politics, tech and business. Every story opens on the TV. Local and state news use your city (below).</p>
+<select id="news" name="news"><option value="on" ${if (s.news) "selected" else ""}>On</option><option value="off" ${if (!s.news) "selected" else ""}>Off</option></select>
 
 <h2>Weather</h2>
 <label for="city">City</label><input type="text" id="city" name="city" value="${esc(s.cityName)}" placeholder="e.g. Brooklyn">

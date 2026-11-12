@@ -38,6 +38,7 @@ class MarqueeApp : Application(), ImageLoaderFactory {
         super.onCreate()
         instance = this
         app.marquee.tv.net.Http.init(cacheDir.resolve("http"))
+        app.marquee.tv.news.ArticleStore.init(cacheDir.resolve("articles"))
         store = SettingsStore(this)
         app.marquee.tv.ui.components.SoundFx.init(this)
         app.marquee.tv.ui.components.SoundFx.enabled = store.value.uiSounds

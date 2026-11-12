@@ -48,7 +48,7 @@ data class Settings(
     val idleMinutes: Int = 10,
     val previews: String = "PLEX", // OFF | PLEX
     val feedBalance: FeedBalance = FeedBalance.BALANCED, // home rows and Pick Together: Plex vs your services
-    val newsSource: app.marquee.tv.news.NewsSource = app.marquee.tv.news.NewsSource.TOP, // the Dashboard's headlines card
+    val news: Boolean = true, // news on the Dashboard (local, state, national, politics, tech, business)
     val profiles: List<Profile> = listOf(Profile("Me", "AUTO")),
     val activeProfile: Int = 0,
     // Takeover
@@ -61,6 +61,7 @@ data class Settings(
     val redirectPlex: Boolean = false,
     // Location
     val cityName: String = "",
+    val stateName: String = "", // your state or region, for state news (found from your city)
     val latitude: Double = Double.NaN,
     val longitude: Double = Double.NaN,
     val useFahrenheit: Boolean = true,
@@ -190,7 +191,7 @@ class SettingsStore(context: Context) {
             idleMinutes = sp.getInt("idleMinutes", d.idleMinutes),
             previews = s("previews").ifBlank { d.previews },
             feedBalance = FeedBalance.parse(sp.getString("feedBalance", null)),
-            newsSource = app.marquee.tv.news.NewsSource.parse(sp.getString("newsSource", null)),
+            news = sp.getBoolean("newsOn", sp.getString("newsSource", null) != "OFF"),
             profiles = decodeProfiles(s("profiles")).ifEmpty { d.profiles },
             activeProfile = sp.getInt("activeProfile", 0),
             takeoverHome = sp.getBoolean("takeoverHome", d.takeoverHome),
@@ -201,6 +202,7 @@ class SettingsStore(context: Context) {
             plexPlayer = s("plexPlayer").ifBlank { d.plexPlayer },
             redirectPlex = sp.getBoolean("redirectPlex", d.redirectPlex),
             cityName = s("cityName"),
+            stateName = s("stateName"),
             latitude = sp.getFloat("latitude", Float.NaN).toDouble(),
             longitude = sp.getFloat("longitude", Float.NaN).toDouble(),
             useFahrenheit = sp.getBoolean("useFahrenheit", d.useFahrenheit),
@@ -250,7 +252,8 @@ class SettingsStore(context: Context) {
             putInt("idleMinutes", v.idleMinutes)
             putString("previews", v.previews)
             putString("feedBalance", v.feedBalance.name)
-            putString("newsSource", v.newsSource.name)
+            putBoolean("newsOn", v.news)
+            remove("newsSource") // replaced by newsOn
             putString("profiles", encodeProfiles(v.profiles))
             putInt("activeProfile", v.activeProfile)
             putBoolean("takeoverHome", v.takeoverHome)
@@ -261,6 +264,7 @@ class SettingsStore(context: Context) {
             putString("plexPlayer", v.plexPlayer)
             putBoolean("redirectPlex", v.redirectPlex)
             putString("cityName", v.cityName)
+            putString("stateName", v.stateName)
             putFloat("latitude", v.latitude.toFloat())
             putFloat("longitude", v.longitude.toFloat())
             putBoolean("useFahrenheit", v.useFahrenheit)

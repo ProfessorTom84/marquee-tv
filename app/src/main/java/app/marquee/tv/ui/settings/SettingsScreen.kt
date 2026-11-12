@@ -207,11 +207,11 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
             store.update { it.copy(uiSounds = !it.uiSounds) }
             app.marquee.tv.ui.components.SoundFx.enabled = !s.uiSounds
         })
-        ValueRow(
-            "Headlines on the Dashboard",
-            s.newsSource.label + if (s.newsSource == app.marquee.tv.news.NewsSource.LOCAL) " (${s.cityName.ifBlank { "add your city" }})" else "",
-            sub = "Top stories mixes CBS, NBC, PBS and the BBC (Google News outside the US); Near you is Google News for your city. Stories open on the TV where the site allows; otherwise a QR code. Never shown on kids' profiles",
-            onClick = { store.update { it.copy(newsSource = it.newsSource.next()) } },
+        Toggle(
+            s.news, "News on the Dashboard",
+            "Local, state and national headlines across politics, tech and business. Every story opens on the TV. " +
+                (if (s.cityName.isBlank()) "Add your city (Weather & background) for local and state news. " else "") + "Never shown on kids' profiles",
+            { store.update { it.copy(news = !it.news) } },
         )
         ScreensaverSettings(vm, s)
     }
@@ -633,7 +633,7 @@ private fun WeatherSection(vm: MarqueeVm, s: Settings, nav: Nav) {
             }
         }
         results.take(4).forEach { p ->
-            ValueRow(p.name, p.region, onClick = { store.update { it.copy(cityName = p.name, latitude = p.lat, longitude = p.lon) }; results = emptyList(); vm.refreshWeather() })
+            ValueRow(p.name, p.region, onClick = { store.update { it.copy(cityName = p.name, stateName = p.state, latitude = p.lat, longitude = p.lon) }; results = emptyList(); vm.refreshWeather() })
         }
     }
 }

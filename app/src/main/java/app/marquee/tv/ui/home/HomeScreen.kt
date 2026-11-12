@@ -132,7 +132,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     val s by vm.settings.collectAsState()
     val home by vm.home.collectAsState()
     val weather by vm.weather.collectAsState()
-    val headlines by vm.headlines.collectAsState()
+    val news by vm.news.collectAsState()
     val up by vm.upNext.collectAsState()
     val events by vm.events.collectAsState()
     val apps by vm.apps.collectAsState()
@@ -190,8 +190,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                                 vm.app.calendar.configured -> CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
                                 resume != null -> ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
                             }
-                            val news = s.newsSource != app.marquee.tv.news.NewsSource.OFF && !s.profile.kidSafe
-                            if (news) HeadlinesCard(headlines, s.newsSource, s.cityName, Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.Article(it)) }
+                            if (s.news && !s.profile.kidSafe) NewsCard(news, s.cityName.isBlank(), Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.News(it)) }
                             else Spacer(Modifier.weight(1f))
                         }
                     }
@@ -365,81 +364,43 @@ fun CalendarCard(up: app.marquee.tv.system.UpNext?, events: List<app.marquee.tv.
 }
 
 /**
- * News headlines (free feeds, see NewsFeeds): three at a time, moving on every 15 seconds. OK opens the full list
- * with a QR code for each story, so you can read it on your phone.
+ * News on the Dashboard: one story at a time with its picture, moving on every 12 seconds through the lead
+ * stories of each category. OK opens the News screen with that story up top.
  */
 @Composable
-fun HeadlinesCard(
-    items: List<app.marquee.tv.news.Headline>, source: app.marquee.tv.news.NewsSource, city: String, modifier: Modifier,
-    onRead: (app.marquee.tv.news.Headline) -> Unit = {},
-) {
-    var open by remember { mutableStateOf(false) }
-    val perPage = 2
-    val pages = ((items.size + perPage - 1) / perPage).coerceAtLeast(1)
-    val page by androidx.compose.runtime.produceState(0, pages) { while (true) { delay(15_000); value = (value + 1) % pages } }
-    val shown = items.drop((page % pages) * perPage).take(perPage)
-    Focusable(modifier, onClick = { if (items.isNotEmpty()) open = true }) { f ->
-        Column(
-            Modifier.fillMaxSize().glass(stroke = if (f) C.Text else C.Stroke).padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("HEADLINES · ${(if (source == app.marquee.tv.news.NewsSource.LOCAL && city.isNotBlank()) city else source.label).uppercase()}",
-                    style = T.label, modifier = Modifier.weight(1f), maxLines = 1)
-                if (f) Text("OK for more", style = T.sans(8.sp, FontWeight.Bold, C.AmberSoft))
-            }
-            when {
-                items.isEmpty() && source == app.marquee.tv.news.NewsSource.LOCAL && city.isBlank() ->
-                    Text("Add your city in Settings for local news", style = T.sans(12.sp, FontWeight.Bold))
-                items.isEmpty() -> Text("Getting the headlines…", style = T.sans(12.sp, FontWeight.Bold))
-                // Two at a time, room to wrap, then the outlet and how long ago.
-                else -> shown.forEach { h ->
-                    Column {
-                        Text(h.title, style = T.sans(11.sp, FontWeight.Bold).copy(lineHeight = 13.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(listOf(h.source, app.marquee.tv.news.NewsFeeds.ago(h.published)).filter { it.isNotBlank() }.joinToString(" · "),
-                            style = T.sans(8.sp, color = C.Cool), maxLines = 1)
-                    }
-                }
-            }
-        }
+fun NewsCard(sections: List<app.marquee.tv.news.NewsSection>, needsCity: Boolean, modifier: Modifier, onOpen: (app.marquee.tv.news.Story?) -> Unit) {
+    // The first story of each category in turn, then the second of each.
+    val leads = remember(sections) {
+        (0 until 2).flatMap { i -> sections.mapNotNull { sec -> sec.stories.getOrNull(i)?.let { sec to it } } }
     }
-    if (open) HeadlinesDialog(items, onClose = { open = false }, onRead = { open = false; onRead(it) })
-}
-
-@Composable
-private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: () -> Unit, onRead: (app.marquee.tv.news.Headline) -> Unit) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-        var chosen by remember { mutableStateOf(items.firstOrNull()) }
-        val first = remember { androidx.compose.ui.focus.FocusRequester() }
-        LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    val index by androidx.compose.runtime.produceState(0, leads.size) {
+        while (leads.size > 1) { delay(12_000); value = (value + 1) % leads.size }
+    }
+    val current = leads.getOrNull(index % leads.size.coerceAtLeast(1))
+    Focusable(modifier, onClick = { onOpen(current?.second) }) { f ->
         Row(
-            Modifier.padding(40.dp).fillMaxWidth().glass(tint = Color(0xF20B0F1E)).padding(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            Modifier.fillMaxSize().glass(stroke = if (f) C.Text else C.Stroke).padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Headlines", style = T.serif(28.sp), modifier = Modifier.padding(bottom = 6.dp))
-                items.take(10).forEachIndexed { i, h ->
-                    Focusable(
-                        Modifier.fillMaxWidth().then(if (i == 0) Modifier.focusRequester(first) else Modifier),
-                        onClick = { onRead(h) }, onFocus = { if (it) chosen = h },
-                    ) { f ->
-                        Column(
-                            Modifier.fillMaxWidth().background(if (f) Color(0x24FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                        ) {
-                            Text(h.title, style = T.sans(12.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text(listOf(h.source, app.marquee.tv.news.NewsFeeds.ago(h.published)).filter { it.isNotBlank() }.joinToString(" · "),
-                                style = T.sans(9.sp, color = C.Cool))
-                        }
-                    }
+            if (current == null) {
+                Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("NEWS", style = T.label)
+                    Text("Getting the headlines…", style = T.sans(13.sp, FontWeight.Bold))
+                    if (needsCity) Text("Add your city in Settings for local and state news", style = T.small)
                 }
+                return@Row
             }
-            chosen?.takeIf { it.link.isNotBlank() }?.let { h ->
-                Column(Modifier.width(220.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    app.marquee.tv.ui.components.QrImage(h.link, 200.dp)
-                    Text(if (app.marquee.tv.news.ArticleReader.canOpen(h.link)) "OK to read it here, or scan to read on your phone" else "Scan to read this story on your phone", style = T.small)
-                    Text("Back to close", style = T.sans(9.sp, FontWeight.Bold, C.AmberSoft))
-                }
+            val (sec, story) = current
+            Box(Modifier.fillMaxHeight().width(108.dp).clip(RoundedCornerShape(9.dp)).background(Color(0x33000000))) {
+                if (story.image != null) AsyncImage(story.image, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            }
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                Text(sec.title.uppercase(), style = T.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(story.title, style = T.sans(11.sp, FontWeight.Bold).copy(lineHeight = 14.sp), maxLines = 5, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (f) "Press OK for the news" else listOf(story.source, app.marquee.tv.news.NewsFeeds.ago(story.published)).filter { it.isNotBlank() }.joinToString(" · "),
+                    style = T.sans(8.sp, if (f) FontWeight.Bold else FontWeight.Normal, if (f) C.AmberSoft else C.Cool), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

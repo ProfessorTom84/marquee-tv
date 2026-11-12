@@ -1,6 +1,9 @@
 package app.marquee.tv.news
 
 import app.marquee.tv.net.Http
+import kotlinx.serialization.Serializable
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -8,6 +11,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 /** A news story pulled out of its web page, to read on the TV: text, pictures and captions, no menus or ads. */
+@Serializable
 data class Article(
     val title: String,
     val site: String,
@@ -17,33 +21,89 @@ data class Article(
     val blocks: List<Block>,
     val url: String,
 ) {
-    sealed interface Block {
-        data class Para(val text: String) : Block
-        data class Heading(val text: String) : Block
-        data class Image(val url: String, val caption: String) : Block
+    enum class Kind { PARA, HEADING, IMAGE }
+
+    /** A paragraph or heading ([text]), or a picture ([url], with its caption in [text]). */
+    @Serializable
+    data class Block(val kind: Kind, val text: String = "", val url: String = "") {
+        companion object {
+            fun para(text: String) = Block(Kind.PARA, text)
+            fun heading(text: String) = Block(Kind.HEADING, text)
+            fun image(url: String, caption: String = "") = Block(Kind.IMAGE, caption, url)
+        }
+    }
+}
+
+/**
+ * Stories Marquee has read, kept on the TV so they open at once, and the links that couldn't be read, so they
+ * aren't tried again for a while. Good stories are kept three days; failures are retried after six hours.
+ */
+object ArticleStore {
+    @Serializable
+    private data class Entry(val at: Long, val article: Article?)
+
+    private const val KEEP_MS = 3L * 24 * 3600_000
+    private const val RETRY_MS = 6L * 3600_000
+    @Volatile private var dir: File? = null
+    private val memory = ConcurrentHashMap<String, Entry>()
+
+    fun init(d: File) {
+        dir = d.apply { mkdirs() }
+        Thread {
+            val now = System.currentTimeMillis()
+            runCatching { d.listFiles()?.filter { now - it.lastModified() > KEEP_MS }?.forEach { it.delete() } }
+        }.apply { priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    private fun file(link: String) = dir?.let { d ->
+        File(d, java.security.MessageDigest.getInstance("SHA-1").digest(link.toByteArray()).joinToString("") { "%02x".format(it) } + ".json")
+    }
+
+    private fun fresh(e: Entry) = System.currentTimeMillis() - e.at < (if (e.article != null) KEEP_MS else RETRY_MS)
+
+    /** Whether this link has an answer already; then [article] is the story, or null if it couldn't be read. */
+    fun known(link: String): Boolean = entry(link) != null
+    fun article(link: String): Article? = entry(link)?.article
+
+    private fun entry(link: String): Entry? {
+        memory[link]?.let { return it.takeIf(::fresh) }
+        val e = runCatching { file(link)?.takeIf { it.exists() }?.readText()?.let { Http.json.decodeFromString(Entry.serializer(), it) } }.getOrNull() ?: return null
+        memory[link] = e
+        return e.takeIf(::fresh)
+    }
+
+    fun put(link: String, article: Article?) {
+        val e = Entry(System.currentTimeMillis(), article)
+        memory[link] = e
+        runCatching { file(link)?.writeText(Http.json.encodeToString(Entry.serializer(), e)) }
     }
 }
 
 /**
  * Fetches a story's page and keeps just the story, like a browser's reader mode. Marquee identifies itself
- * honestly; when a page can't be read (paywalls, sites that turn it away, Google News links), it returns null and
- * the reader offers a QR code to read the story on your phone instead.
+ * honestly and never works around a site that turns it away: a page that can't be read properly (refused,
+ * paywalled, video-only, an aggregator's page) gives null, and the news only ever shows stories that didn't.
  */
 object ArticleReader {
-    /** Google News links lead to a Google page, not the story, so those stories open as a QR code instead. */
-    fun canOpen(link: String) = link.startsWith("http") && !link.contains("news.google.com/")
-
     suspend fun read(link: String): Article? = withContext(Dispatchers.IO) {
-        if (!canOpen(link)) return@withContext null
-        val html = runCatching { Http.getText(link, mapOf("User-Agent" to NewsFeeds.USER_AGENT, "Accept" to "text/html"), cacheMinutes = 60) }.getOrNull()
-            ?: return@withContext null
-        extract(html, link)
+        if (!link.startsWith("http")) return@withContext null
+        if (ArticleStore.known(link)) return@withContext ArticleStore.article(link)
+        val html = try {
+            Http.getText(link, mapOf("User-Agent" to NewsFeeds.USER_AGENT, "Accept" to "text/html"), cacheMinutes = 0)
+        } catch (e: app.marquee.tv.net.HttpException) {
+            ArticleStore.put(link, null); return@withContext null // the site said no: remember that
+        } catch (e: Exception) {
+            return@withContext null // no connection or a timeout: try again next time
+        }
+        val a = runCatching { extract(html, link) }.getOrNull()
+        ArticleStore.put(link, a)
+        a
     }
 
     /** Lines that aren't the story: ads, sign-up and donation prompts, "Watch:" links to other stories. */
     private val boilerplate = Regex(
         "^(advertisement\\b|ad\\b|read more\\b|read next\\b|sign up\\b|subscribe\\b|follow us\\b|share this\\b|copyright\\b|©|" +
-            "related:|watch:|listen:|read:|more:|see also:|getty images\\b|image source\\b|" +
+            "related:|watch:|watch live\\b|listen:|read:|more:|see also:|getty images\\b|image source\\b|" +
             "stand with (free|independent)|support (our|independent|local|free) journalism|join press pass|donate\\b)",
         RegexOption.IGNORE_CASE,
     )
@@ -85,23 +145,25 @@ object ArticleReader {
                 "p" -> {
                     if (e.closest("figcaption") != null) return@forEach
                     val t = e.text().trim()
-                    if (t.length >= 25 && !boilerplate.containsMatchIn(t)) blocks += Article.Block.Para(t)
+                    if (t.length >= 25 && !boilerplate.containsMatchIn(t)) blocks += Article.Block.para(t)
                 }
-                "h2", "h3" -> e.text().trim().takeIf { it.length in 3..140 }?.let { blocks += Article.Block.Heading(it) }
-                "img" -> imageUrl(doc, e)?.takeIf { seenImages.add(it) }?.let { blocks += Article.Block.Image(it, "") }
+                "h2", "h3" -> e.text().trim().takeIf { it.length in 3..140 }?.let { blocks += Article.Block.heading(it) }
+                "img" -> imageUrl(doc, e)?.takeIf { seenImages.add(it) }?.let { blocks += Article.Block.image(it) }
                 "figcaption" -> {
                     val last = blocks.lastOrNull()
                     val cap = e.text().trim()
-                    if (last is Article.Block.Image && last.caption.isBlank() && cap.isNotBlank()) blocks[blocks.lastIndex] = last.copy(caption = cap)
+                    if (last != null && last.kind == Article.Kind.IMAGE && last.text.isBlank() && cap.isNotBlank()) blocks[blocks.lastIndex] = last.copy(text = cap)
                 }
             }
         }
         // Not enough on the page itself (built by scripts)? Many news sites also publish the text as structured data.
-        if (blocks.count { it is Article.Block.Para } < 3 && ldBody != null) {
-            blocks.removeAll { it is Article.Block.Para || it is Article.Block.Heading }
-            ldBody.split(Regex("\\n+|(?<=[.!?\"”])\\s{2,}")).map { it.trim() }.filter { it.length >= 25 }.forEach { blocks += Article.Block.Para(it) }
+        fun paras() = blocks.filter { it.kind == Article.Kind.PARA }
+        if (paras().size < 4 && ldBody != null) {
+            blocks.removeAll { it.kind != Article.Kind.IMAGE }
+            ldBody.split(Regex("\\n+|(?<=[.!?\"”])\\s{2,}")).map { it.trim() }.filter { it.length >= 25 }.forEach { blocks += Article.Block.para(it) }
         }
-        if (blocks.count { it is Article.Block.Para } < 2) return null
+        // A real story, not a teaser above a paywall or a caption under a video.
+        if (paras().size < 4 || paras().sumOf { it.text.length } < 600) return null
         return Article(title.trim(), site, byline, published, hero, blocks.take(120), url)
     }
 
