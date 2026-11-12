@@ -3,6 +3,7 @@
 Marquee replaces the Google TV home screen with one built around what you already pay for:
 
 - **No ads, no sponsored rows, no rentals or purchases.** Every pick is on your Plex, included in a subscription you have, or genuinely free. Ad-supported tiers are never recommended.
+- **News on the Dashboard:** headlines from CBS, NBC, PBS NewsHour and the BBC (or Google News for your city). Press OK to read a story right on the TV, with its photos; where a site doesn't allow that, a QR code opens it on your phone. Marquee always identifies itself to news sites and never works around a site that turns it away.
 - **Three home styles:** Dashboard (weather, calendar and news headlines), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day.
 - **Your choice of screensaver:** Google TV's own (Google Photos, art…) or Marquee Ambient, for both idle time and Back on the home screen. Settings shows which one Android will actually run and puts it right if it's out of step.
 - **A feed built around your services, with the best of your Plex:**

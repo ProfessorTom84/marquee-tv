@@ -17,8 +17,8 @@ android {
         buildConfigField("String", "UPDATE_TOKEN", "\"${System.getenv("MARQUEE_UPDATE_TOKEN") ?: ""}\"")
         minSdk = 31
         targetSdk = 35
-        versionCode = 37
-        versionName = "0.16.1"
+        versionCode = 38
+        versionName = "0.17.0"
     }
 
     signingConfigs {
@@ -72,6 +72,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+    // Reads news articles' web pages so the story can be shown on the TV (news/ArticleReader).
+    implementation("org.jsoup:jsoup:1.18.1")
     implementation("com.google.zxing:core:3.5.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")

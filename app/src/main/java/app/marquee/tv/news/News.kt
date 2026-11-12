@@ -3,6 +3,7 @@ package app.marquee.tv.news
 import app.marquee.tv.data.SettingsStore
 import app.marquee.tv.net.Http
 import app.marquee.tv.net.urlEncode
+import kotlinx.coroutines.async
 import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -12,10 +13,10 @@ data class Headline(val title: String, val source: String, val link: String, val
 
 /** Where the Dashboard's headlines come from (Settings → Home style, or the phone setup page). */
 enum class NewsSource(val label: String) {
-    TOP("Top stories"),
+    TOP("Top stories"), // a mix of outlets whose feeds link straight to their stories, so they open on the TV
     LOCAL("Near you"),
     BBC("BBC News"),
-    NPR("NPR"),
+    PBS("PBS NewsHour"),
     OFF("Off");
 
     fun next() = entries[(ordinal + 1) % entries.size]
@@ -26,15 +27,41 @@ enum class NewsSource(val label: String) {
 }
 
 object NewsFeeds {
+    /** Marquee always says what it is; a site that turns it away gets a QR code to read on your phone instead. */
+    const val USER_AGENT = "Marquee TV launcher (news reader)"
+
+    /**
+     * "Top stories": outlets whose feed links go straight to the story, so it can open on the TV (Google News links
+     * only lead to a Google page), and that answer Marquee as itself.
+     */
+    val topOutlets = listOf(
+        "CBS News" to "https://www.cbsnews.com/latest/rss/main",
+        "NBC News" to "https://feeds.nbcnews.com/nbcnews/public/news",
+        "PBS NewsHour" to "https://www.pbs.org/newshour/feeds/rss/headlines",
+        "BBC News" to "https://feeds.bbci.co.uk/news/rss.xml",
+    )
+
+    /** Newest first, one story per subject: when several outlets cover the same thing, keep the first. */
+    fun mix(lists: List<List<Headline>>, max: Int): List<Headline> {
+        fun key(t: String) = t.lowercase().replace(Regex("[^a-z0-9 ]"), "").split(' ').filter { it.length > 3 }.take(5).toSet()
+        val seen = mutableListOf<Set<String>>()
+        return lists.flatten().sortedByDescending { it.published ?: Instant.EPOCH }.filter { h ->
+            val k = key(h.title)
+            val dup = seen.any { s -> k.isNotEmpty() && (k intersect s).size >= 3 }
+            if (!dup) seen += k
+            !dup
+        }.take(max)
+    }
+
     /** Google News is regional (country code from settings); "Near you" searches it for your city. */
     fun url(source: NewsSource, region: String, city: String): String? {
         val r = region.uppercase().ifBlank { "US" }
         val google = "hl=en-$r&gl=$r&ceid=$r:en"
         return when (source) {
-            NewsSource.TOP -> "https://news.google.com/rss?$google"
+            NewsSource.TOP -> "https://news.google.com/rss?$google" // only used outside the US (see NewsRepo)
             NewsSource.LOCAL -> city.takeIf { it.isNotBlank() }?.let { "https://news.google.com/rss/search?q=${it.urlEncode()}&$google" }
             NewsSource.BBC -> "https://feeds.bbci.co.uk/news/rss.xml"
-            NewsSource.NPR -> "https://feeds.npr.org/1001/rss.xml"
+            NewsSource.PBS -> "https://www.pbs.org/newshour/feeds/rss/headlines"
             NewsSource.OFF -> null
         }
     }
@@ -90,11 +117,15 @@ object NewsFeeds {
 
 class NewsRepo(private val store: SettingsStore) {
     /** Up to [max] headlines, newest first; refreshed at most every 20 minutes (and kept across restarts). */
-    suspend fun headlines(max: Int = 12): List<Headline> {
+    suspend fun headlines(max: Int = 12): List<Headline> = kotlinx.coroutines.coroutineScope {
         val s = store.value
         val source = s.newsSource
-        val url = NewsFeeds.url(source, s.region, s.cityName) ?: return emptyList()
-        val xml = Http.getText(url, mapOf("User-Agent" to "Marquee TV launcher"), cacheMinutes = 20)
-        return NewsFeeds.parse(xml, source.label).sortedByDescending { it.published ?: Instant.EPOCH }.take(max)
+        fun fetch(url: String, label: String) = async {
+            runCatching { NewsFeeds.parse(Http.getText(url, mapOf("User-Agent" to NewsFeeds.USER_AGENT), cacheMinutes = 20), label) }.getOrDefault(emptyList())
+        }
+        if (source == NewsSource.TOP && s.region.uppercase().ifBlank { "US" } == "US")
+            return@coroutineScope NewsFeeds.mix(NewsFeeds.topOutlets.map { (label, url) -> fetch(url, label) }.map { it.await() }, max)
+        val url = NewsFeeds.url(source, s.region, s.cityName) ?: return@coroutineScope emptyList()
+        fetch(url, source.label).await().sortedByDescending { it.published ?: Instant.EPOCH }.take(max)
     }
 }

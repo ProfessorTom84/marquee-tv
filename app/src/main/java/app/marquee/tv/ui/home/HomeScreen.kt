@@ -191,7 +191,7 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
                                 resume != null -> ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
                             }
                             val news = s.newsSource != app.marquee.tv.news.NewsSource.OFF && !s.profile.kidSafe
-                            if (news) HeadlinesCard(headlines, s.newsSource, s.cityName, Modifier.weight(1f).fillMaxHeight())
+                            if (news) HeadlinesCard(headlines, s.newsSource, s.cityName, Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.Article(it)) }
                             else Spacer(Modifier.weight(1f))
                         }
                     }
@@ -369,7 +369,10 @@ fun CalendarCard(up: app.marquee.tv.system.UpNext?, events: List<app.marquee.tv.
  * with a QR code for each story, so you can read it on your phone.
  */
 @Composable
-fun HeadlinesCard(items: List<app.marquee.tv.news.Headline>, source: app.marquee.tv.news.NewsSource, city: String, modifier: Modifier) {
+fun HeadlinesCard(
+    items: List<app.marquee.tv.news.Headline>, source: app.marquee.tv.news.NewsSource, city: String, modifier: Modifier,
+    onRead: (app.marquee.tv.news.Headline) -> Unit = {},
+) {
     var open by remember { mutableStateOf(false) }
     val perPage = 2
     val pages = ((items.size + perPage - 1) / perPage).coerceAtLeast(1)
@@ -400,11 +403,11 @@ fun HeadlinesCard(items: List<app.marquee.tv.news.Headline>, source: app.marquee
             }
         }
     }
-    if (open) HeadlinesDialog(items) { open = false }
+    if (open) HeadlinesDialog(items, onClose = { open = false }, onRead = { open = false; onRead(it) })
 }
 
 @Composable
-private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: () -> Unit) {
+private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: () -> Unit, onRead: (app.marquee.tv.news.Headline) -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         var chosen by remember { mutableStateOf(items.firstOrNull()) }
         val first = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -418,7 +421,7 @@ private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: 
                 items.take(10).forEachIndexed { i, h ->
                     Focusable(
                         Modifier.fillMaxWidth().then(if (i == 0) Modifier.focusRequester(first) else Modifier),
-                        onClick = { chosen = h }, onFocus = { if (it) chosen = h },
+                        onClick = { onRead(h) }, onFocus = { if (it) chosen = h },
                     ) { f ->
                         Column(
                             Modifier.fillMaxWidth().background(if (f) Color(0x24FFFFFF) else Color.Transparent, RoundedCornerShape(8.dp))
@@ -434,7 +437,7 @@ private fun HeadlinesDialog(items: List<app.marquee.tv.news.Headline>, onClose: 
             chosen?.takeIf { it.link.isNotBlank() }?.let { h ->
                 Column(Modifier.width(220.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     app.marquee.tv.ui.components.QrImage(h.link, 200.dp)
-                    Text("Scan to read this story on your phone", style = T.small)
+                    Text(if (app.marquee.tv.news.ArticleReader.canOpen(h.link)) "OK to read it here, or scan to read on your phone" else "Scan to read this story on your phone", style = T.small)
                     Text("Back to close", style = T.sans(9.sp, FontWeight.Bold, C.AmberSoft))
                 }
             }

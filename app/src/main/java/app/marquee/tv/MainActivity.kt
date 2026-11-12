@@ -46,6 +46,7 @@ sealed interface Screen {
     data object Apps : Screen
     data class Settings(val section: String = "style") : Screen
     data object SunsetPreview : Screen
+    data class Article(val headline: app.marquee.tv.news.Headline) : Screen
 }
 
 class Nav {
@@ -140,6 +141,7 @@ private fun Root(vm: MarqueeVm, nav: Nav) {
                 Screen.Apps -> AllAppsScreen(vm, nav)
                 is Screen.Settings -> SettingsScreen(vm, nav, s.section)
                 Screen.SunsetPreview -> app.marquee.tv.ui.screens.SunsetPreview(vm, nav)
+                is Screen.Article -> app.marquee.tv.ui.screens.ArticleScreen(vm, nav, s.headline)
             }
         }
         }

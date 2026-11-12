@@ -210,7 +210,7 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
         ValueRow(
             "Headlines on the Dashboard",
             s.newsSource.label + if (s.newsSource == app.marquee.tv.news.NewsSource.LOCAL) " (${s.cityName.ifBlank { "add your city" }})" else "",
-            sub = "Top stories and Near you come from Google News for your country; also BBC News or NPR. Never shown on kids' profiles",
+            sub = "Top stories mixes CBS, NBC, PBS and the BBC (Google News outside the US); Near you is Google News for your city. Stories open on the TV where the site allows; otherwise a QR code. Never shown on kids' profiles",
             onClick = { store.update { it.copy(newsSource = it.newsSource.next()) } },
         )
         ScreensaverSettings(vm, s)

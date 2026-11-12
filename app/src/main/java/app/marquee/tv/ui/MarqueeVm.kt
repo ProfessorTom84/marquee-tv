@@ -22,6 +22,7 @@ import app.marquee.tv.system.Check
 import app.marquee.tv.recs.Recommender
 import app.marquee.tv.recs.FeedLayout
 import app.marquee.tv.news.Headline
+import app.marquee.tv.news.ArticleReader
 import app.marquee.tv.news.NewsSource
 import app.marquee.tv.system.TvApp
 import app.marquee.tv.system.UpNext
@@ -209,6 +210,7 @@ class MarqueeVm : ViewModel() {
     suspend fun detail(t: Title): DetailData = withContext(Dispatchers.IO) { app.recommender.detail(t) }
     suspend fun pick(f: Recommender.Filters): List<Title> = withContext(Dispatchers.IO) { app.recommender.pick(f) }
     suspend fun search(q: String): List<Title> = withContext(Dispatchers.IO) { app.recommender.search(q) }
+    suspend fun readArticle(link: String) = ArticleReader.read(link)
 
     fun onInput() {
         lastInput.value = System.currentTimeMillis()
