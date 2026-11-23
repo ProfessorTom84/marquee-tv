@@ -114,6 +114,20 @@ class WildlifeTest {
         }
     }
 
+    /** The performance check's parade: everything in it is in view from the first moment and through the step. */
+    @Test fun theParadeFillsTheSkyForTheWholeStep() {
+        for (season in Season.entries) {
+            val parade = Wildlife.parade(season)
+            assertEquals(listOf(Creature.GEESE, Creature.FLOCK, Creature.CROWS, Creature.STARLINGS), parade.map { it.first.creature })
+            assertTrue("more birds than any one sighting", parade.sumOf { it.first.count } > 1200)
+            for ((visit, from) in parade) for (later in listOf(0f, 3f, 6f)) {
+                val t = from + later
+                val seen = (0 until visit.count).count { i -> val p = visit.place(i, t, 1920f, 1080f); p.x in 0f..1920f && p.y in 0f..1080f }
+                assertTrue("${visit.creature} $later s in: $seen of ${visit.count} in view", seen >= visit.count / 2 || (visit.creature == Creature.CROWS && seen >= 2))
+            }
+        }
+    }
+
     @Test fun theSameSeedGivesTheSameFlight() {
         for (c in Creature.entries) {
             val a = Wildlife.of(c, 42, Season.AUTUMN); val b = Wildlife.of(c, 42, Season.AUTUMN)

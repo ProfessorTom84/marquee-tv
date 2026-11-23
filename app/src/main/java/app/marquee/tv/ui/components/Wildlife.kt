@@ -2,22 +2,36 @@ package app.marquee.tv.ui.components
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.VertexMode
+import androidx.compose.ui.graphics.Vertices
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import app.marquee.tv.weather.Sky
 import java.time.LocalDate
 import java.time.Month
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
@@ -39,6 +53,11 @@ import kotlin.random.Random
  *
  * A sighting is fixed the moment it is picked, so drawing it is a pure function of how long it has been in view:
  * nothing is simulated or stored from frame to frame, and between sightings nothing runs at all.
+ *
+ * It is drawn the way the falling leaves are, because that is what the TV's graphics chip is quickest at. Each
+ * creature's poses are painted once, before it appears, into one small picture (a [Flipbook]); every frame then
+ * only places pieces of that picture. A murmuration is a single batch of triangles. Only the owl and the squirrel,
+ * one large shape each and seldom seen, are outlined afresh every frame.
  */
 
 enum class Creature { SONGBIRDS, FLOCK, CROWS, GEESE, HAWK, STARLINGS, BUTTERFLIES, SQUIRREL, OWL, BATS, FLYING_SQUIRREL }
@@ -51,7 +70,10 @@ abstract class Visit internal constructor(val creature: Creature) {
     /** Seconds from the first member entering to the last one leaving. */
     abstract val duration: Float
 
-    /** Quick, close creatures (a leaping squirrel, a bat) are redrawn every frame; far, slow ones half as often. */
+    /**
+     * Whether it needs redrawing on every frame while it is in view. Only a leaping squirrel does, for the second or
+     * two its leap takes. Everything else moves at the pace of the leaves and the rain.
+     */
     open val everyFrame: Boolean get() = false
 
     internal abstract val count: Int
@@ -73,6 +95,13 @@ abstract class Visit internal constructor(val creature: Creature) {
         for (i in 0 until count) { val b = box(i, t, w, h); if (b.right > 0f && b.left < w && b.bottom > 0f && b.top < h) return true }
         return false
     }
+
+    /**
+     * Paints the pictures this sighting is drawn from, for a screen [h] pixels tall. It can be called from any one
+     * thread before the sighting starts, so the painting is done before the creature appears; [draw] does it on the
+     * spot if it hasn't been.
+     */
+    open fun prepare(h: Float) {}
 
     protected abstract fun DrawScope.paint(t: Float, ink: Color, alpha: Float)
 
@@ -174,6 +203,15 @@ object Wildlife {
         }
     }
 
+    /**
+     * More than ever crosses at once, for the performance check: a full V of geese, a full flock, six crows and a
+     * murmuration. Each comes with how many seconds into its crossing to start it, so that all of them are in view
+     * together from the first moment and for several seconds after.
+     */
+    fun parade(season: Season): List<Pair<Visit, Float>> = listOf(
+        Triple(Creature.GEESE, 42, 0.4f), Triple(Creature.FLOCK, 13, 0.25f), Triple(Creature.CROWS, 10, 0.3f), Triple(Creature.STARLINGS, 14, 0.35f),
+    ).map { (creature, seed, from) -> of(creature, seed, season).let { it to it.duration * from } }
+
     /** A flash of colour now and then: a cardinal against the snow, a jay in autumn, a goldfinch in summer. */
     private fun songbirds(r: Random, season: Season): Visit {
         val roll = r.nextFloat()
@@ -272,10 +310,49 @@ private class Outline {
 private object Scratch {
     val a by lazy { Path() }
     val b by lazy { Path() }
-    val dots by lazy { Paint().apply { strokeCap = StrokeCap.Round; isAntiAlias = true } }
+    val plain by lazy { Paint().apply { color = Color.White } } // white: a batch of triangles keeps its own colours whichever way they are combined with the paint's
     val outline = Outline()
     val jx = FloatArray(5); val jy = FloatArray(5)
+
+    // The filter that tints a white picture with a creature's colour. The colour only changes with the light, every
+    // couple of minutes, so the same filter serves frame after frame.
+    private var tintColor = Color.Unspecified
+    private var tint: ColorFilter? = null
+    fun tint(c: Color): ColorFilter = tint.takeIf { c == tintColor } ?: ColorFilter.tint(c).also { tint = it; tintColor = c }
 }
+
+/**
+ * A creature's poses, painted once: side by side in one picture, in white so that they can be tinted to suit the
+ * sky. While it flies, each frame only places pieces of that picture. A shape that changes is different: the
+ * processor has to fill it in and send it to the graphics chip afresh every time, which is the slow way round.
+ * [poses] are outlines around the creature's own centre and [scale] the pixels to one of their units.
+ */
+private class Flipbook(poses: List<Path>, scale: Float, paint: DrawScope.(Path) -> Unit = { drawPath(it, Color.White) }) {
+    private val image: ImageBitmap
+    private val cw: Int; private val ch: Int; private val ox: Int; private val oy: Int
+
+    init {
+        var l = 0f; var t = 0f; var r = 0f; var b = 0f
+        for (p in poses) { val k = p.getBounds(); l = min(l, k.left); t = min(t, k.top); r = max(r, k.right); b = max(b, k.bottom) }
+        // A clear margin around every pose, so neighbours never bleed into one another when a piece is turned or resized.
+        ox = ceil(-l * scale).toInt() + MARGIN; oy = ceil(-t * scale).toInt() + MARGIN
+        cw = ox + ceil(r * scale).toInt() + MARGIN; ch = oy + ceil(b * scale).toInt() + MARGIN
+        image = ImageBitmap(cw * poses.size, ch)
+        CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image), Size((cw * poses.size).toFloat(), ch.toFloat())) {
+            poses.forEachIndexed { i, p -> withTransform({ translate(i * cw + ox.toFloat(), oy.toFloat()); scale(scale, scale, Offset.Zero) }) { paint(p) } }
+        }
+        image.prepareToDraw()
+    }
+
+    /** Places pose [i] with the creature's centre at the origin: move, turn and size the canvas first. */
+    fun stamp(scope: DrawScope, i: Int, alpha: Float, tint: ColorFilter?) =
+        scope.drawImage(image, IntOffset(i * cw, 0), IntSize(cw, ch), IntOffset(-ox, -oy), IntSize(cw, ch), alpha, colorFilter = tint, filterQuality = FilterQuality.Low)
+
+    private companion object { const val MARGIN = 2 }
+}
+
+/** Which of [n] poses, spread evenly through a wingbeat, is nearest to place [q] in it. */
+private fun pose(q: Float, n: Int) = (q * n + 0.5f).toInt() % n
 
 /** Wing height through one beat, 1 at the top to 0 at the bottom: a quick downstroke, then a slower recovery. */
 private fun beat(q: Float): Float = if (q < 0.4f) 0.5f + 0.5f * cos(PI_F * q / 0.4f) else 0.5f - 0.5f * cos(PI_F * (q - 0.4f) / 0.6f)
@@ -395,18 +472,15 @@ private fun wingInto(o: Outline, p: Path, f: BirdForm, a1: Float, a2: Float, k: 
 }
 
 /**
- * A nearer bird: body, head and tail as one outline, with two wings that hinge at the shoulder and bend at the
- * wrist. [q] is the place in a wingbeat (negative: wings tucked).
+ * A nearer bird, added to [p] in lengths of its own body: body, head and tail as one outline, with two wings that
+ * hinge at the shoulder and bend at the wrist. [q] is the place in a wingbeat (negative: wings tucked).
  */
-private fun DrawScope.shapedBird(f: BirdForm, x: Float, y: Float, len: Float, dir: Float, pitch: Float, q: Float, color: Color, alpha: Float) {
-    val o = Scratch.outline; val p = Scratch.a.apply { rewind() }
+private fun birdInto(o: Outline, p: Path, f: BirdForm, q: Float) {
     o.shape(f.body).into(p)
-    if (q >= 0f) {
-        val a1 = f.lo + (f.hi - f.lo) * beat(q); val a2 = a1 - flex(q)
-        wingInto(o, p, f, a1, a2, -1f)
-        wingInto(o, p, f, a1, a2, 1f)
-    }
-    withTransform({ translate(x, y); rotate(pitch * dir, Offset.Zero); scale(len * dir, len, Offset.Zero) }) { drawPath(p, color, alpha) }
+    if (q < 0f) return
+    val a1 = f.lo + (f.hi - f.lo) * beat(q); val a2 = a1 - flex(q)
+    wingInto(o, p, f, a1, a2, -1f)
+    wingInto(o, p, f, a1, a2, 1f)
 }
 
 // =====================================================================================
@@ -426,6 +500,8 @@ private class Geese(r: Random, season: Season) : Visit(Creature.GEESE) {
     override val duration = r.between(30f, 42f)
     override val count get() = n
     override val reach = 40f
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
 
     init {
         val longArm = ((n - 1) * r.between(0.5f, 0.7f)).toInt().coerceAtLeast(1)
@@ -452,15 +528,25 @@ private class Geese(r: Random, season: Season) : Visit(Creature.GEESE) {
         )
     }
 
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        val o = Outline(); val s = wing * h / 1080f
+        book = Flipbook(List(BEATS) { k -> Path().also { farBird(o, it, view, GOOSE_PLAN, 0f, 0f, s, 1.3f, course.dir, k / BEATS.toFloat(), -0.35f, 0.7f, 0.4f) } }, 1f)
+        bakedFor = h
+    }
+
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
-        val birds = Scratch.a.apply { rewind() }
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
+        val a = 0.8f * alpha * lowFade(course.y(t / duration, h), h); val tint = Scratch.tint(ink)
         for (i in 0 until n) {
             val p = place(i, t, w, h)
-            farBird(Scratch.outline, birds, view, GOOSE_PLAN, p.x, p.y, wing * sc, 1.3f, course.dir, frac(t / period + beatAt[i]), -0.35f, 0.7f, 0.4f)
+            withTransform({ translate(p.x, p.y) }) { pages.stamp(this, pose(frac(t / period + beatAt[i]), BEATS), a, tint) }
         }
-        drawPath(birds, ink, 0.8f * alpha * lowFade(course.y(t / duration, h), h))
     }
+
+    private companion object { const val BEATS = 12 } // poses through one wingbeat
 }
 
 /** A loose flock of small birds in bounding flight: a burst of wingbeats on the way up, wings tucked on the way down. */
@@ -469,7 +555,7 @@ private class Flock(r: Random) : Visit(Creature.FLOCK) {
     private val spreadX = r.between(110f, 170f); private val spreadY = r.between(40f, 70f)
     private val ox = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * spreadX }
     private val oy = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * spreadY }
-    private val wing = FloatArray(n) { r.between(8f, 11.5f) }
+    private val wing = FloatArray(n) { r.between(8f, LARGEST) }
     private val period = FloatArray(n) { r.between(0.62f, 0.8f) }
     private val phase = FloatArray(n) { r.nextFloat() }
     private val bound = FloatArray(n) { r.between(7f, 12f) }
@@ -479,6 +565,8 @@ private class Flock(r: Random) : Visit(Creature.FLOCK) {
     override val duration = r.between(9f, 13f)
     override val count get() = n
     override val reach = 18f
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
 
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
         val sc = h / 1080f; val u = t / duration
@@ -492,16 +580,29 @@ private class Flock(r: Random) : Visit(Creature.FLOCK) {
         )
     }
 
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        val o = Outline(); val s = LARGEST * h / 1080f
+        // Eight poses through a wingbeat, then one with the wings tucked.
+        book = Flipbook(List(BEATS + 1) { k -> Path().also { farBird(o, it, view, SMALL_PLAN, 0f, 0f, s, 1.25f, course.dir, if (k < BEATS) k / BEATS.toFloat() else -1f, -0.55f, 0.85f, 0.25f) } }, 1f)
+        bakedFor = h
+    }
+
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
-        val birds = Scratch.a.apply { rewind() }
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
+        val a = 0.82f * alpha * lowFade(course.y(t / duration, h), h); val tint = Scratch.tint(ink)
         for (i in 0 until n) {
             val at = place(i, t, w, h)
-            val p = frac(t / period[i] + phase[i])
-            farBird(Scratch.outline, birds, view, SMALL_PLAN, at.x, at.y, wing[i] * sc, 1.25f, course.dir, if (p < 0.6f) frac(p / 0.6f * 3f) else -1f, -0.55f, 0.85f, 0.25f)
+            val p = frac(t / period[i] + phase[i]); val k = wing[i] / LARGEST
+            withTransform({ translate(at.x, at.y); scale(k, k, Offset.Zero) }) {
+                pages.stamp(this, if (p < 0.6f) pose(frac(p / 0.6f * 3f), BEATS) else BEATS, a, tint)
+            }
         }
-        drawPath(birds, ink, 0.82f * alpha * lowFade(course.y(t / duration, h), h))
     }
+
+    private companion object { const val BEATS = 8; const val LARGEST = 11.5f } // poses through one wingbeat; the longest wing
 }
 
 private enum class Flight { BOUNDING, ROWING }
@@ -522,7 +623,10 @@ private class Fliers(
     private val course = course(r, 0.07f, 0.36f, reach + 60f, reach + 60f)
     override val duration = (0 until n).maxOf { delay[it] + cross[it] }
     override val count get() = n
-    override val everyFrame get() = flight == Flight.BOUNDING
+    private val longest = maxLen
+    private val beats = if (flight == Flight.BOUNDING) 8 else 12 // poses through one wingbeat
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
 
     /** The place in a wingbeat at [t]; negative while a small bird has its wings tucked between bursts. */
     private fun wingbeat(i: Int, t: Float): Float {
@@ -538,28 +642,42 @@ private class Fliers(
         return Offset(course.x(u, w, sc), course.y(u, h) + (lift[i] + rise) * sc)
     }
 
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        val o = Outline()
+        val poses = MutableList(beats) { k -> Path().also { birdInto(o, it, form, k / beats.toFloat()) } }
+        if (flight == Flight.BOUNDING) poses += Path().also { birdInto(o, it, form, -1f) } // and one with the wings tucked
+        book = Flipbook(poses, longest * h / 1080f)
+        bakedFor = h
+    }
+
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
-        val color = tint?.let { lerp(ink, it, 0.55f) } ?: ink
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
+        val colour = Scratch.tint(tint?.let { lerp(ink, it, 0.55f) } ?: ink)
         for (i in 0 until n) {
             if (t < delay[i] || t > delay[i] + cross[i]) continue
             val p = place(i, t, w, h); val next = place(i, t + 0.04f, w, h)
             // The body tips up as it climbs and down as it falls, a little less than its path does.
             val pitch = atan2(next.y - p.y, abs(next.x - p.x)) * DEG * 0.6f
-            shapedBird(form, p.x, p.y, len[i] * sc, course.dir, pitch, wingbeat(i, t), color, 0.86f * alpha * lowFade(p.y, h))
+            val q = wingbeat(i, t); val k = len[i] / longest
+            withTransform({ translate(p.x, p.y); rotate(pitch * course.dir, Offset.Zero); scale(k * course.dir, k, Offset.Zero) }) {
+                pages.stamp(this, if (q < 0f) beats else pose(q, beats), 0.86f * alpha * lowFade(p.y, h), colour)
+            }
         }
     }
 }
 
 /** A soaring hawk from below, head toward the top: (x, y, sharp) for its right half. One unit is half its wingspan. */
-private val hawkShape by lazy {
+private fun hawkShape(): Path {
     val half = floatArrayOf(
         0f, -0.30f, 0f, 0.055f, -0.26f, 0f, 0.075f, -0.19f, 0f, 0.17f, -0.175f, 0f, 0.50f, -0.215f, 0f, 0.80f, -0.17f, 0f,
         0.975f, -0.115f, 1f, 0.905f, -0.065f, 0f, 1f, -0.03f, 1f, 0.905f, 0.005f, 0f, 0.985f, 0.05f, 1f, 0.875f, 0.065f, 0f, // the spread "fingers" at the wingtip
         0.94f, 0.125f, 1f, 0.825f, 0.115f, 0f, 0.865f, 0.185f, 1f,
         0.70f, 0.16f, 0f, 0.42f, 0.165f, 0f, 0.17f, 0.13f, 0f, 0.105f, 0.21f, 0f, 0.20f, 0.46f, 1f, 0f, 0.52f, 0f,           // trailing edge and the fanned tail
     )
-    Path().also { Outline().shape(half, mirror = true).into(it) }
+    return Path().also { Outline().shape(half, mirror = true).into(it) }
 }
 
 /** A hawk circling on a thermal, drifting slowly across the sky on set wings. */
@@ -573,8 +691,17 @@ private class Hawk(r: Random) : Visit(Creature.HAWK) {
     override val duration = r.between(38f, 52f)
     override val count get() = 1
     override val reach = 84f
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
 
     private fun angle(t: Float) = start + TAU * t / turn
+
+    // Painted a little larger than it flies on the far side of its circle, at the size of the near side.
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        book = Flipbook(listOf(hawkShape()), span * NEAREST * h / 1080f)
+        bakedFor = h
+    }
 
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
         val sc = h / 1080f; val u = t / duration; val m = (radius + reach) * sc
@@ -584,16 +711,20 @@ private class Hawk(r: Random) : Visit(Creature.HAWK) {
     }
 
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
         val p = place(0, t, w, h); val next = place(0, t + 0.05f, w, h)
         val heading = atan2(next.y - p.y, next.x - p.x) * DEG
         val a = angle(t)
-        val near = 1f + 0.10f * sin(a)            // the low side of its circle is the near side
-        val bank = 0.84f + 0.10f * cos(a + 0.6f)  // banked wings look shorter
-        withTransform({ translate(p.x, p.y); rotate(heading + 90f, Offset.Zero); scale(span * sc * near * bank, span * sc * near, Offset.Zero) }) {
-            drawPath(hawkShape, ink, 0.76f * alpha * lowFade(p.y, h))
+        val near = (1f + (NEAREST - 1f) * sin(a)) / NEAREST // the low side of its circle is the near side
+        val bank = 0.84f + 0.10f * cos(a + 0.6f)            // banked wings look shorter
+        withTransform({ translate(p.x, p.y); rotate(heading + 90f, Offset.Zero); scale(near * bank, near, Offset.Zero) }) {
+            pages.stamp(this, 0, 0.76f * alpha * lowFade(p.y, h), Scratch.tint(ink))
         }
     }
+
+    private companion object { const val NEAREST = 1.1f }
 }
 
 /**
@@ -604,35 +735,96 @@ private class Hawk(r: Random) : Visit(Creature.HAWK) {
  */
 private class Starlings(r: Random) : Visit(Creature.STARLINGS) {
     private val n = 900 + r.nextInt(300)
-    private val lag = FloatArray(n) { 1.15f * r.nextFloat() }         // seconds behind the front of the flock
-    private val line = FloatArray(n) { r.between(-1.25f, 1.25f) }     // which line through the sky it follows
-    private val ox = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * 22f }
-    private val oy = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * 16f }
-    private val f = FloatArray(4) { r.between(0f, TAU) }
-    private val rangeX = r.between(280f, 360f); private val rangeY = r.between(95f, 130f)
-    private val dir = r.side(); private val y0 = r.between(0.2f, 0.27f)
-    private val pts = FloatArray(n * 2)
-    override val duration = r.between(26f, 34f)
+    // For each bird and each of the four swings of its path: where in the swing it is, as a cosine and a sine
+    // already multiplied by the swing's size. Then a frame costs eight sines for the whole flock, not four a bird.
+    private val swing = FloatArray(n * 8)
+    private val ox: FloatArray; private val oy: FloatArray
+    private val rangeX: Float
+    private val dir: Float; private val y0: Float
+    // Each bird is one tiny dart of a triangle: its three corners (x, y) around its place, every bird turned its own way.
+    private val dart = FloatArray(n * 6)
+    private var mesh: Vertices? = null
+    private var inked = 0
+    override val duration: Float
     override val count get() = n
     override val reach = 8f
 
+    init {
+        val lag = FloatArray(n) { 1.15f * r.nextFloat() }         // seconds behind the front of the flock
+        val line = FloatArray(n) { r.between(-1.25f, 1.25f) }     // which line through the sky it follows
+        ox = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * 22f }
+        oy = FloatArray(n) { (r.nextFloat() + r.nextFloat() - 1f) * 16f }
+        val f = FloatArray(4) { r.between(0f, TAU) }
+        rangeX = r.between(280f, 360f); val rangeY = r.between(95f, 130f)
+        dir = r.side(); y0 = r.between(0.2f, 0.27f)
+        for (i in 0 until n) {
+            val a = r.between(0f, TAU); val len = r.between(2.1f, 2.9f)
+            dart[i * 6] = len * cos(a); dart[i * 6 + 1] = len * sin(a)
+            dart[i * 6 + 2] = len * 0.8f * cos(a + 2.5f); dart[i * 6 + 3] = len * 0.8f * sin(a + 2.5f)
+            dart[i * 6 + 4] = len * 0.8f * cos(a - 2.5f); dart[i * 6 + 5] = len * 0.8f * sin(a - 2.5f)
+        }
+        duration = r.between(26f, 34f)
+        // Across: two swings of the wandering point the flock chases; up and down: two more. Each bird is [lag] behind
+        // the point and [line] to one side of its path.
+        for (i in 0 until n) {
+            val j = i * 8
+            for (k in 0 until 4) {
+                val at = f[k] - RATE[k] * lag[i] + SPREAD[k] * line[i]
+                val size = (if (k < 2) rangeX else rangeY) * SHARE[k]
+                swing[j + k * 2] = size * cos(at); swing[j + k * 2 + 1] = size * sin(at)
+            }
+        }
+    }
+
+    // What every bird shares at one moment, worked out once for the frame.
+    private var tunedTo = Float.NaN
+    private val sines = FloatArray(4); private val cosines = FloatArray(4)
+    private var across = 0f
+
+    private fun tune(t: Float) {
+        for (k in 0 until 4) { sines[k] = sin(RATE[k] * t); cosines[k] = cos(RATE[k] * t) }
+        val u = t / duration
+        across = u + 0.6f / TAU * sin(TAU * u) // quick in from the side, lingering over the middle, quick away
+        tunedTo = t
+    }
+
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
-        val sc = h / 1080f; val u = t / duration; val m = (rangeX + 40f) * sc
-        val s = u + 0.6f / TAU * sin(TAU * u) // quick in from the side, lingering over the middle, quick away
-        val along = -m + s * (w + 2f * m)
-        val ti = t - lag[i]; val k = line[i]
-        val px = rangeX * (0.56f * sin(0.47f * ti + f[0] + 0.35f * k) + 0.44f * sin(1.03f * ti + f[1] + 0.8f * k))
-        val py = rangeY * (0.6f * sin(0.61f * ti + f[2] + 0.75f * k) + 0.4f * sin(1.27f * ti + f[3] - 0.6f * k))
+        if (t != tunedTo) tune(t)
+        val sc = h / 1080f; val m = (rangeX + 40f) * sc; val j = i * 8
+        val along = -m + across * (w + 2f * m)
+        // sin(a + b) = sin a cos b + cos a sin b, with the bird's own b already worked out
+        val px = sines[0] * swing[j] + cosines[0] * swing[j + 1] + sines[1] * swing[j + 2] + cosines[1] * swing[j + 3]
+        val py = sines[2] * swing[j + 4] + cosines[2] * swing[j + 5] + sines[3] * swing[j + 6] + cosines[3] * swing[j + 7]
         return Offset((if (dir > 0f) along else w - along) + (px + ox[i]) * sc, h * y0 + (py + oy[i]) * sc)
     }
 
+    override fun prepare(h: Float) {
+        if (mesh != null) return
+        val blank = List(n * 3) { Offset.Zero }
+        mesh = Vertices(VertexMode.Triangles, blank, blank, List(n * 3) { Color.Black }, emptyList())
+    }
+
+    // The whole flock goes to the graphics chip as one batch of triangles: one drawing instruction, however many birds.
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
         val w = size.width; val h = size.height; val sc = h / 1080f
-        for (i in 0 until n) { val o = place(i, t, w, h); pts[i * 2] = o.x; pts[i * 2 + 1] = o.y }
-        val paint = Scratch.dots
-        paint.color = ink.copy(alpha = ink.alpha * 0.8f * alpha * lowFade(h * y0, h))
-        paint.strokeWidth = max(1.5f, 2.5f * sc)
-        drawContext.canvas.drawRawPoints(PointMode.Points, pts, paint)
+        prepare(h)
+        val m = mesh ?: return
+        val at = m.positions
+        for (i in 0 until n) {
+            val o = place(i, t, w, h); val j = i * 6
+            at[j] = o.x + dart[j] * sc; at[j + 1] = o.y + dart[j + 1] * sc
+            at[j + 2] = o.x + dart[j + 2] * sc; at[j + 3] = o.y + dart[j + 3] * sc
+            at[j + 4] = o.x + dart[j + 4] * sc; at[j + 5] = o.y + dart[j + 5] * sc
+        }
+        val colour = ink.copy(alpha = ink.alpha * 0.8f * alpha * lowFade(h * y0, h)).toArgb()
+        if (colour != inked) { m.colors.fill(colour); inked = colour }
+        drawContext.canvas.drawVertices(m, BlendMode.Dst, Scratch.plain) // Dst: the colour is each corner's own
+    }
+
+    private companion object {
+        val RATE = floatArrayOf(0.47f, 1.03f, 0.61f, 1.27f)    // how fast each swing goes, radians a second
+        val SHARE = floatArrayOf(0.56f, 0.44f, 0.6f, 0.4f)     // how much of the flock's range each swing takes
+        val SPREAD = floatArrayOf(0.35f, 0.8f, 0.75f, -0.6f)   // how far a bird's line shifts it along each swing
     }
 }
 
@@ -697,7 +889,7 @@ private fun batInto(o: Outline, p: Path, a: Float) {
 /** A few bats, each on its own jinking path after insects. */
 private class Bats(r: Random) : Visit(Creature.BATS) {
     private val n = 2 + r.nextInt(4)
-    private val wing = FloatArray(n) { r.between(21f, 28f) }
+    private val wing = FloatArray(n) { r.between(21f, LARGEST) }
     private val delay = FloatArray(n) { if (it == 0) 0f else r.between(0.3f, 3.6f) }
     private val cross = FloatArray(n) { r.between(4.5f, 6.5f) }
     private val dir = FloatArray(n) { r.side() }
@@ -708,7 +900,8 @@ private class Bats(r: Random) : Visit(Creature.BATS) {
     override val duration = (0 until n).maxOf { delay[it] + cross[it] }
     override val count get() = n
     override val reach = 40f
-    override val everyFrame get() = true
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
 
     private fun swerve(i: Int, k: Int, t: Float) = sin(wobble[i * 8 + k * 2] * t + wobble[i * 8 + k * 2 + 1])
 
@@ -721,30 +914,40 @@ private class Bats(r: Random) : Visit(Creature.BATS) {
         )
     }
 
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        val o = Outline()
+        book = Flipbook(List(BEATS) { k -> Path().also { batInto(o, it, mix(-0.5f, 0.8f, beat(k / BEATS.toFloat()))) } }, LARGEST * h / 1080f)
+        bakedFor = h
+    }
+
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
+        val tint = Scratch.tint(ink)
         for (i in 0 until n) {
             if (t < delay[i] || t > delay[i] + cross[i]) continue
-            val at = place(i, t, w, h)
-            val p = Scratch.a.apply { rewind() }
-            batInto(Scratch.outline, p, mix(-0.5f, 0.8f, beat(frac(t / period[i] + i * 0.37f))))
+            val at = place(i, t, w, h); val k = wing[i] / LARGEST
             // It leans into each swerve.
             val lean = 17f * sin(wobble[i * 8] * t + wobble[i * 8 + 1] + 1.3f)
-            withTransform({ translate(at.x, at.y); rotate(lean, Offset.Zero); scale(wing[i] * sc, wing[i] * sc, Offset.Zero) }) {
-                drawPath(p, ink, 0.85f * alpha * lowFade(at.y, h))
+            withTransform({ translate(at.x, at.y); rotate(lean, Offset.Zero); scale(k, k, Offset.Zero) }) {
+                pages.stamp(this, pose(frac(t / period[i] + i * 0.37f), BEATS), 0.85f * alpha * lowFade(at.y, h), tint)
             }
         }
     }
+
+    private companion object { const val BEATS = 8; const val LARGEST = 28f } // poses through one wingbeat; the longest wing
 }
 
 /** A flying squirrel from below, nose toward the top: (x, y, sharp) for its right half. One unit is its body. */
-private val gliderShape by lazy {
+private fun gliderShape(): Path {
     val half = floatArrayOf(
         0f, -0.76f, 0f, 0.09f, -0.68f, 0f, 0.145f, -0.57f, 0f, 0.21f, -0.53f, 1f, 0.125f, -0.45f, 0f, 0.21f, -0.40f, 0f,          // nose, cheek, ear, shoulder
         0.52f, -0.50f, 0f, 0.70f, -0.56f, 1f, 0.66f, -0.43f, 0f, 0.585f, -0.05f, 0f, 0.64f, 0.34f, 0f, 0.73f, 0.45f, 1f, 0.57f, 0.48f, 0f, // front paw, the skin's edge, hind paw
         0.22f, 0.42f, 0f, 0.085f, 0.50f, 0f, 0.13f, 0.72f, 0f, 0.14f, 1.02f, 0f, 0.095f, 1.22f, 0f, 0f, 1.30f, 0f,                 // rump and the flat tail
     )
-    Path().also { Outline().shape(half, mirror = true).into(it) }
+    return Path().also { Outline().shape(half, mirror = true).into(it) }
 }
 
 /** A flying squirrel's glide: in over the top of the screen, down a long shallow slope, and out at the side. */
@@ -758,7 +961,14 @@ private class Glider(r: Random) : Visit(Creature.FLYING_SQUIRREL) {
     override val duration = r.between(3.4f, 4.2f)
     override val count get() = 1
     override val reach = 76f
-    override val everyFrame get() = true
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
+
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        book = Flipbook(listOf(gliderShape()), body * h / 1080f)
+        bakedFor = h
+    }
 
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
         val sc = h / 1080f; val u = t / duration; val m = reach * sc
@@ -767,12 +977,14 @@ private class Glider(r: Random) : Visit(Creature.FLYING_SQUIRREL) {
     }
 
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
-        val w = size.width; val h = size.height; val sc = h / 1080f
+        val w = size.width; val h = size.height
+        prepare(h)
+        val pages = book ?: return
         val p = place(0, t, w, h); val next = place(0, t + 0.05f, w, h)
         val heading = atan2(next.y - p.y, next.x - p.x) * DEG + 5f * sin(t * 2.1f + roll)
         val tilt = 0.9f + 0.1f * cos(t * 2.1f + roll) // rocking from side to side as it steers
-        withTransform({ translate(p.x, p.y); rotate(heading + 90f, Offset.Zero); scale(body * sc * tilt, body * sc, Offset.Zero) }) {
-            drawPath(gliderShape, ink, 0.8f * alpha * lowFade(p.y, h))
+        withTransform({ translate(p.x, p.y); rotate(heading + 90f, Offset.Zero); scale(tilt, 1f, Offset.Zero) }) {
+            pages.stamp(this, 0, 0.8f * alpha * lowFade(p.y, h), Scratch.tint(ink))
         }
     }
 }
@@ -912,22 +1124,18 @@ private class Squirrels(r: Random) : Visit(Creature.SQUIRREL) {
 }
 
 /** One side of a butterfly from above, head toward the top: forewing and hindwing. One unit is a forewing. */
-private val butterflyWings by lazy {
-    Path().also {
-        val o = Outline()
-        o.start().to(0.03f, -0.10f).to(0.50f, -0.62f).to(0.95f, -0.80f).to(1.0f, -0.52f).to(0.80f, -0.16f).to(0.40f, -0.02f).to(0.03f, 0.04f).into(it)
-        o.start().to(0.03f, -0.02f).to(0.55f, -0.08f).to(0.80f, 0.22f).to(0.66f, 0.60f).to(0.30f, 0.66f).to(0.05f, 0.30f).into(it)
-    }
+private fun butterflyWings(): Path = Path().also {
+    val o = Outline()
+    o.start().to(0.03f, -0.10f).to(0.50f, -0.62f).to(0.95f, -0.80f).to(1.0f, -0.52f).to(0.80f, -0.16f).to(0.40f, -0.02f).to(0.03f, 0.04f).into(it)
+    o.start().to(0.03f, -0.02f).to(0.55f, -0.08f).to(0.80f, 0.22f).to(0.66f, 0.60f).to(0.30f, 0.66f).to(0.05f, 0.30f).into(it)
 }
-
-private val wingEdge = Stroke(0.09f)
 
 /** One or two butterflies wandering across: wings opening and closing, each beat a small hop upward. */
 private class Butterflies(r: Random, season: Season) : Visit(Creature.BUTTERFLIES) {
     private val n = 1 + r.nextInt(2)
     // Monarchs on their autumn passage; whites, sulphurs and blues through spring and summer.
     private val color = if (season == Season.AUTUMN) Color(0xFFE8872B) else listOf(Color(0xFFF2F0E6), Color(0xFFEEDB5C), Color(0xFFE8872B), Color(0xFF9DB5E8))[r.nextInt(4)]
-    private val wing = FloatArray(n) { r.between(17f, 23f) }
+    private val wing = FloatArray(n) { r.between(17f, LARGEST) }
     private val delay = FloatArray(n) { it * r.between(0.8f, 2.4f) }
     private val cross = FloatArray(n) { r.between(11f, 15f) }
     private val lift = FloatArray(n) { if (it == 0) 0f else r.between(-70f, 70f) }
@@ -937,6 +1145,16 @@ private class Butterflies(r: Random, season: Season) : Visit(Creature.BUTTERFLIE
     override val duration = (0 until n).maxOf { delay[it] + cross[it] }
     override val count get() = n
     override val reach = 34f
+    private val edge = lerp(color, Color(0xFF20140E), 0.8f)
+    private var book: Flipbook? = null
+    private var bakedFor = 0f
+
+    // One pair of wings in its own colours, darker at the edge; the other side is the same picture turned over.
+    override fun prepare(h: Float) {
+        if (bakedFor == h) return
+        book = Flipbook(listOf(butterflyWings()), LARGEST * h / 1080f) { drawPath(it, color); drawPath(it, edge, 0.75f, Stroke(0.09f)) }
+        bakedFor = h
+    }
 
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
         val sc = h / 1080f; val u = ((t - delay[i]) / cross[i]).coerceIn(0f, 1f)
@@ -949,25 +1167,25 @@ private class Butterflies(r: Random, season: Season) : Visit(Creature.BUTTERFLIE
 
     override fun DrawScope.paint(t: Float, ink: Color, alpha: Float) {
         val w = size.width; val h = size.height; val sc = h / 1080f
-        val edge = lerp(color, Color(0xFF20140E), 0.8f)
+        prepare(h)
+        val pages = book ?: return
         for (i in 0 until n) {
             if (t < delay[i] || t > delay[i] + cross[i]) continue
             val at = place(i, t, w, h); val next = place(i, t + 0.25f, w, h)
             // Wings are never quite flat nor quite shut; the body points the way it's drifting, nose up.
             val open = 0.16f + 0.84f * abs(cos(PI_F * rate[i] * t))
             val heading = (if (next.x >= at.x) 1f else -1f) * (52f + 14f * sin(1.7f * t + wander[i * 3]))
-            val s = wing[i] * sc; val a = 0.9f * alpha * lowFade(at.y, h)
+            val s = wing[i] * sc; val k = wing[i] / LARGEST; val a = 0.9f * alpha * lowFade(at.y, h)
             withTransform({ translate(at.x, at.y); rotate(heading, Offset.Zero) }) {
-                var k = 1f
+                var side = 1f
                 repeat(2) {
-                    withTransform({ scale(k * s * open, s, Offset.Zero) }) {
-                        drawPath(butterflyWings, color, a)
-                        drawPath(butterflyWings, edge, a * 0.75f, wingEdge)
-                    }
-                    k = -1f
+                    withTransform({ scale(side * open * k, k, Offset.Zero) }) { pages.stamp(this, 0, a, null) }
+                    side = -1f
                 }
                 drawLine(edge, Offset(0f, -0.3f * s), Offset(0f, 0.36f * s), strokeWidth = max(1.2f, 0.11f * s), cap = StrokeCap.Round, alpha = a)
             }
         }
     }
+
+    private companion object { const val LARGEST = 23f } // the longest wing
 }

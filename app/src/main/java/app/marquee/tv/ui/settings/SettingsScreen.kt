@@ -290,7 +290,7 @@ private fun PerfSection(vm: MarqueeVm, nav: Nav) {
     val activity = LocalContext.current as? android.app.Activity
     val last = remember(phase) { (phase as? app.marquee.tv.system.PerfCheck.Phase.Done)?.result?.lines() }
     val saved = remember(phase) { if (last == null) check.lastText(vm.app) else null }
-    H("Performance check", "Measures how smoothly the home screen scrolls on this TV and what costs the most. It takes about ${app.marquee.tv.system.PerfCheck.SECONDS} seconds in ${app.marquee.tv.system.PerfCheck.steps.size} steps: first don't press anything, then scroll up and down the home screen until it's done (the sky and card effects switch off for a moment while it measures them). Follow the banner at the top. The results come back here, and on the phone setup page so you can copy them.")
+    H("Performance check", "Measures how smoothly the home screen scrolls on this TV and what costs the most. It takes about ${app.marquee.tv.system.PerfCheck.SECONDS} seconds in ${app.marquee.tv.system.PerfCheck.steps.size} steps: first don't press anything (for a few seconds the sky fills with birds, so they can be measured too), then scroll up and down the home screen until it's done (the sky and card effects switch off for a moment while it measures them). Follow the banner at the top. The results come back here, and on the phone setup page so you can copy them.")
     Group {
         PillButton("Start check", primary = true, height = 38.dp) {
             if (activity != null) {

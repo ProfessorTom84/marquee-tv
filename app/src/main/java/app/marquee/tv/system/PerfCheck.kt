@@ -13,6 +13,7 @@ import android.view.FrameMetrics
 import android.view.Window
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -21,18 +22,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * home screen, in steps, so it can say where the time goes without a computer:
  *
  *  1. Hands off (nothing pressed): how often the screen redraws on its own (the animated sky) and what that costs.
- *  2. Scrolling, as normal.
- *  3. Scrolling with the animated sky switched off (a plain dark background).
- *  4. Scrolling with the sky off and plain cards (artwork and title only: no shade, badges or logos).
+ *  2. Hands off, with the sky's wildlife crossing: more birds than ever pass at once, to see what a sighting adds.
+ *  3. Scrolling, as normal.
+ *  4. Scrolling with the animated sky switched off (a plain dark background).
+ *  5. Scrolling with the sky off and plain cards (artwork and title only: no shade, badges or logos).
  *
- * Differences between steps 2–4 are what the sky and the card effects cost the TV's graphics chip. It also notes
+ * Differences between steps 3–5 are what the sky and the card effects cost the TV's graphics chip. It also notes
  * the device, its temperature state, memory, and what the home screen was showing.
  */
 object PerfCheck {
-    data class Step(val name: String, val seconds: Int, val lite: Int, val scroll: Boolean)
+    data class Step(val name: String, val seconds: Int, val lite: Int, val scroll: Boolean, val wildlife: Boolean = false)
 
     val steps = listOf(
         Step("Hands off", 6, 0, scroll = false),
+        Step("Hands off, birds crossing", 6, 0, scroll = false, wildlife = true),
         Step("Scrolling, as normal", 10, 0, scroll = true),
         Step("Scrolling, sky switched off", 10, 1, scroll = true),
         Step("Scrolling, sky off and plain cards", 10, 2, scroll = true),
@@ -42,6 +45,10 @@ object PerfCheck {
 
     /** 0 = normal, 1 = no sky, 2 = no sky and plain cards. Compose reads this, so screens switch as steps change. */
     var liteLevel by mutableIntStateOf(0)
+        private set
+
+    /** True during the step that fills the sky with birds (see Wildlife.parade). Compose reads this too. */
+    var wildlife by mutableStateOf(false)
         private set
 
     sealed interface Phase {
@@ -124,6 +131,7 @@ object PerfCheck {
             val begin = at
             main.postDelayed({
                 liteLevel = step.lite
+                wildlife = step.wildlife
                 recording = -1
                 phase.value = Phase.Running(i, System.currentTimeMillis() + step.seconds * 1000L)
                 main.postDelayed({ recording = i }, SETTLE_MS)
@@ -137,6 +145,7 @@ object PerfCheck {
         main.removeCallbacksAndMessages(null)
         stopListening()
         liteLevel = 0
+        wildlife = false
         phase.value = Phase.Idle
     }
 
@@ -150,6 +159,7 @@ object PerfCheck {
     private fun finish(ctx: Context) {
         stopListening()
         liteLevel = 0
+        wildlife = false
         val home = runCatching { describe() }.getOrDefault(emptyList()) // read on the main thread
         Thread {
             val r = synchronized(this) { summarise(ctx, home) }
@@ -183,10 +193,10 @@ object PerfCheck {
         )
     }
 
-    /** Plain-English reading of the steps (hands off, normal, no sky, plain cards). Public for tests. */
+    /** Plain-English reading of the steps (hands off, birds crossing, normal, no sky, plain cards). Public for tests. */
     fun verdict(s: List<StepResult>, optimised: String): String {
-        if (s.size < 4 || s.drop(1).any { it.frames < 50 }) return "Not enough scrolling to judge. Start again and keep scrolling up and down until the check says it's done."
-        val (idle, normal, noSky, plain) = s
+        if (s.size < 5 || s.drop(2).any { it.frames < 50 }) return "Not enough scrolling to judge. Start again and keep scrolling up and down until the check says it's done."
+        val (idle, birds, normal, noSky, plain) = s
         val out = mutableListOf<String>()
         if (normal.latePct <= 5 && normal.gpuP50 <= 14) out += "Scrolling is smooth"
         else {
@@ -200,6 +210,11 @@ object PerfCheck {
                 if (optimised.startsWith("No")) ", partly because Android hasn't optimised Marquee since its last update yet" else ""
         }
         if (idle.fps >= 5) out += "while nothing is pressed the screen still redraws %.0f times a second (the animated sky), %.0f ms of graphics each time".format(idle.fps, idle.gpuP50)
+        // What a sighting adds, measured with more birds in the sky than ever cross at once.
+        if (birds.fps >= 5) out += "with a sky full of birds it redraws %.0f times a second, %.0f ms each (%s)".format(
+            birds.fps, birds.gpuP50,
+            (birds.gpuP50 - idle.gpuP50).let { more -> if (idle.fps < 5) "they are all that is moving" else if (more >= 1) "%.0f ms more than without them".format(more) else "no more than without them" },
+        )
         return out.joinToString("; ").replaceFirstChar { it.uppercase() } + "."
     }
 
