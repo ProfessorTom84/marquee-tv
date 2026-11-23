@@ -250,4 +250,38 @@ class ScreenshotTest {
 
     @Test fun nightHomeBefore() = nightHome(orbs = true)
     @Test fun nightHomeAfter() = nightHome(orbs = false)
+
+    /**
+     * Wildlife, frozen part-way across the Dashboard's sky. Each sighting is (creature, seed, how far through its
+     * crossing). In the app only one crosses at a time, a minute or two apart; here a few share the frame.
+     */
+    private fun wildlife(sky: Sky, hour: Int, minute: Int, vararg sightings: Triple<app.marquee.tv.ui.components.Creature, Int, Float>) {
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"))
+        val date = java.time.LocalDate.of(2026, 10, 10)
+        app.marquee.tv.ui.components.SkyRendering.synchronous = true
+        app.marquee.tv.ui.components.SkyRendering.stillTime = 40f
+        app.marquee.tv.ui.components.SkyRendering.stillVisits = sightings.map { (creature, seed, at) ->
+            val v = app.marquee.tv.ui.components.Wildlife.of(creature, seed, app.marquee.tv.ui.components.Season.AUTUMN)
+            v to v.duration * at
+        }
+        try {
+            paparazzi.snapshot {
+                app.marquee.tv.ui.components.LiveSky(sky, null, latitude = 40.99, longitude = -73.78, date = date, now = java.time.LocalTime.of(hour, minute), grain = true,
+                    overlay = Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)))
+            }
+        } finally {
+            app.marquee.tv.ui.components.SkyRendering.stillVisits = emptyList() // or every later sky would show them too
+        }
+    }
+
+    @Test fun wildlifeByDay() = wildlife(Sky.PARTLY, 14, 0,
+        Triple(app.marquee.tv.ui.components.Creature.GEESE, 2, 0.5f), Triple(app.marquee.tv.ui.components.Creature.SQUIRREL, 11, 0.52f),
+        Triple(app.marquee.tv.ui.components.Creature.SONGBIRDS, 3, 0.4f), Triple(app.marquee.tv.ui.components.Creature.HAWK, 1, 0.2f))
+
+    @Test fun wildlifeAtDusk() = wildlife(Sky.CLEAR, 18, 30,
+        Triple(app.marquee.tv.ui.components.Creature.STARLINGS, 7, 0.5f), Triple(app.marquee.tv.ui.components.Creature.CROWS, 4, 0.5f))
+
+    @Test fun wildlifeAtNight() = wildlife(Sky.CLEAR, 22, 0,
+        Triple(app.marquee.tv.ui.components.Creature.OWL, 2, 0.5f), Triple(app.marquee.tv.ui.components.Creature.BATS, 3, 0.45f),
+        Triple(app.marquee.tv.ui.components.Creature.FLYING_SQUIRREL, 4, 0.5f))
 }

@@ -84,12 +84,15 @@ fun WeatherBackdrop(
     if (app.marquee.tv.system.PerfCheck.liteLevel >= 1) { Box(modifier.fillMaxSize().background(Color(0xFF07060B))); return }
     val store = androidx.compose.runtime.remember { runCatching { app.marquee.tv.MarqueeApp.instance.store }.getOrNull() }
     val s = store?.state?.collectAsState()?.value
+    // Wildlife can be switched off in Settings, and stays away during a performance check so its numbers compare from run to run.
+    val checking = app.marquee.tv.system.PerfCheck.phase.collectAsState().value is app.marquee.tv.system.PerfCheck.Phase.Running
     // Re-read the clock every minute so the sky follows the sun through the day.
     val now by androidx.compose.runtime.produceState(LocalTime.now()) { while (true) { delay(30_000); value = LocalTime.now() } }
     LiveSky(
         weather?.sky, weather?.isDay, modifier,
         windKph = weather?.windKph ?: 0.0, sunrise = weather?.sunrise, sunset = weather?.sunset,
         latitude = s?.latitude ?: Double.NaN, longitude = s?.longitude ?: Double.NaN, now = now, overlay = overlay, grain = grain, sideScrim = sideScrim, orbs = orbs,
+        wildlife = (s?.wildlife ?: true) && !checking,
     )
 }
 

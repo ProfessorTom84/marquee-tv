@@ -81,6 +81,7 @@ fun SunsetPreview(vm: MarqueeVm, nav: Nav) {
             windKph = weather?.windKph ?: 8.0, sunrise = weather?.sunrise, sunset = weather?.sunset,
             latitude = s.latitude, longitude = s.longitude, date = today, now = simulated,
             grain = true, fadeMs = 900, stepMinutes = 2,
+            wildlife = false, // the sky here runs two hours in 45 seconds; a bird at its own pace would look wrong
         )
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0xCC03040A))))
         Column(Modifier.align(Alignment.BottomStart).padding(start = 64.dp, bottom = 56.dp, end = 64.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -626,6 +626,7 @@ private fun WeatherSection(vm: MarqueeVm, s: Settings, nav: Nav) {
             onClick = { nav.go(app.marquee.tv.Screen.SunsetPreview) },
         )
         Toggle(s.ambientScene, "Use the live sky in Ambient", "Instead of a slideshow of Plex artwork", { vm.app.store.update { it.copy(ambientScene = !it.ambientScene) } })
+        Toggle(s.wildlife, "Birds and wildlife", "Every minute or two something crosses the live sky: birds, a flock of geese, a squirrel, an owl after dark", { store.update { it.copy(wildlife = !it.wildlife) } })
         Toggle(s.useFahrenheit, "Use °F", "", { store.update { it.copy(useFahrenheit = !it.useFahrenheit) }; vm.refreshWeather() })
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("New York", "Los Angeles", "Chicago", "London", "Toronto", "Sydney").forEach { c ->

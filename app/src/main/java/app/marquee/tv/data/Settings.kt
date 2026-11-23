@@ -57,6 +57,7 @@ data class Settings(
     val youtubePackage: String = "",
     val scene: String = "AUTO", // AUTO or a Scene name
     val ambientScene: Boolean = false, // Ambient shows your scene instead of Plex artwork
+    val wildlife: Boolean = true, // birds, squirrels and other creatures cross the live sky now and then
     val plexPlayer: String = "AUTO", // AUTO (Plezy when installed) | PLEZY | PLEX
     val redirectPlex: Boolean = false,
     // Location
@@ -199,6 +200,7 @@ class SettingsStore(context: Context) {
             youtubePackage = s("youtubePackage"),
             scene = s("scene").ifBlank { d.scene },
             ambientScene = sp.getBoolean("ambientScene", d.ambientScene),
+            wildlife = sp.getBoolean("wildlife", d.wildlife),
             plexPlayer = s("plexPlayer").ifBlank { d.plexPlayer },
             redirectPlex = sp.getBoolean("redirectPlex", d.redirectPlex),
             cityName = s("cityName"),
@@ -261,6 +263,7 @@ class SettingsStore(context: Context) {
             putString("youtubePackage", v.youtubePackage)
             putString("scene", v.scene)
             putBoolean("ambientScene", v.ambientScene)
+            putBoolean("wildlife", v.wildlife)
             putString("plexPlayer", v.plexPlayer)
             putBoolean("redirectPlex", v.redirectPlex)
             putString("cityName", v.cityName)

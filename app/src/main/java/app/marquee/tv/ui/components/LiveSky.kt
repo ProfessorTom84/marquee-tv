@@ -4,10 +4,13 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
@@ -38,6 +41,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import app.marquee.tv.weather.Sky
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.first
@@ -430,8 +434,15 @@ private fun smooth(e0: Float, e1: Float, x: Float): Float { val t = ((x - e0) / 
 //  The baked sky: gradient, sun or moon, stars, scrim and a fine grain (which also kills banding).
 // =====================================================================================
 
-/** Tests and previews bake the sky on the spot instead of in the background. */
-object SkyRendering { @Volatile var synchronous = false; @Volatile var stillTime = 37f }
+/**
+ * Tests and previews bake the sky on the spot instead of in the background. [stillVisits] puts wildlife sightings in
+ * such a still frame, each that many seconds into its crossing.
+ */
+object SkyRendering {
+    @Volatile var synchronous = false
+    @Volatile var stillTime = 37f
+    @Volatile var stillVisits: List<Pair<Visit, Float>> = emptyList()
+}
 
 /** One painting of the sky: the base (gradient, stars, sun, scrims) and its cloud textures. */
 private class SkyFrame(val base: ImageBitmap?, val clouds: List<CloudLayer>)
@@ -598,7 +609,8 @@ private val dotSprite by lazy { softDot() }
 
 /**
  * A premium, quiet sky that follows the real weather and the real sun: colour from the sun's height,
- * soft lit clouds drifting with the wind, rain and snow with depth, stars and a moon in its real phase.
+ * soft lit clouds drifting with the wind, rain and snow with depth, stars and a moon in its real phase, and now
+ * and then a bird, a flock or a squirrel passing through.
  * Everything static is painted once into a bitmap off the main thread; each frame only moves
  * a couple of cloud textures and the precipitation.
  */
@@ -623,17 +635,18 @@ fun LiveSky(
     orbs: Boolean = true,        // draw the sun and moon discs (off behind UI, where cards would cut them in half)
     fadeMs: Int = 4000,          // how long each step of the sky's slow change cross-fades
     stepMinutes: Int = 2,        // how often (in sky time) the light is re-painted
+    wildlife: Boolean = true,    // birds and other creatures crossing now and then (see Wildlife.kt)
 ) = androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxSize()) {
     // Size known during composition, so the first frame is already the finished sky.
     val px = IntSize(constraints.maxWidth.coerceAtMost(4096), constraints.maxHeight.coerceAtMost(4096))
-    SkyContent(sky, px, isDay, windKph, sunrise, sunset, latitude, longitude, date, now, overlay, grain, animate, sideScrim, fadeMs, stepMinutes, orbs)
+    SkyContent(sky, px, isDay, windKph, sunrise, sunset, latitude, longitude, date, now, overlay, grain, animate, sideScrim, fadeMs, stepMinutes, orbs, wildlife)
 }
 
 @Composable
 private fun SkyContent(
     sky: Sky?, px: IntSize, isDay: Boolean?, windKph: Double, sunrise: LocalTime?, sunset: LocalTime?, latitude: Double, longitude: Double,
     date: LocalDate, now: LocalTime, overlay: Brush?, grain: Boolean, animate: Boolean, sideScrim: Brush?, fadeMs: Int, stepMinutes: Int,
-    orbs: Boolean = true,
+    orbs: Boolean = true, wildlife: Boolean = true,
 ) {
     val weather = sky ?: Sky.CLEAR
     val season = remember(date, latitude) { seasonFor(date, latitude) }
@@ -711,12 +724,16 @@ private fun SkyContent(
     val twinkle = look.night > 0.3f && (weather == Sky.CLEAR || weather == Sky.PARTLY)
     val storm = weather == Sky.STORM && animate
     val particles = drops.isNotEmpty() || flakes.isNotEmpty() || life.active || twinkle || storm
+    // Wildlife: in a still frame only what a test or preview asks for; otherwise whatever happens to be passing.
+    val sighting = rememberSighting(moving && wildlife, season, weather, look.elev, wind, date)
+    val stillVisits = if (inspection && animate && wildlife) SkyRendering.stillVisits else emptyList()
 
     // The sky is drawn in parts that change at different speeds, each refreshed only as often as it needs:
     // the base (colours, stars, sun) only when the light changes; the clouds, which drift a few pixels a second,
     // 6 times a second, holding still while you scroll (too slow to notice); and the falling leaves, rain, snow,
     // twinkling stars and lightning 30 times a second, which keep going while you scroll: they're small, so
-    // they cost little next to the screen being redrawn for the scroll anyway.
+    // they cost little next to the screen being redrawn for the scroll anyway. A passing bird or squirrel gets a
+    // layer of its own, which only exists while it is in view.
     val cloudTime by skyClock(166L, moving)
     val time by skyClock(33L, moving && particles, pauseWhileBrowsing = false)
     // The slow cross-fade when the light is re-painted (every couple of minutes).
@@ -762,6 +779,9 @@ private fun SkyContent(
         }
 
     }
+        // Wildlife, behind the weather: rain, snow and leaves fall in front of a distant bird.
+        SightingLayer(sighting, stillVisits, lerp(look.pal.upper, look.pal.lower, 0.4f), Wildlife.visibility(weather))
+
         // Particles, drawn over the cached sky: twinkling stars, lightning, rain, snow, and seasonal life (leaves,
         // petals or fireflies).
         if (particles) Canvas(Modifier.fillMaxSize().graphicsLayer()) {
@@ -808,6 +828,72 @@ private fun SkyContent(
         // The screen's own scrim (Cinematic's text side), above everything.
         sideScrim?.let { scrim -> Canvas(Modifier.fillMaxSize().graphicsLayer()) { drawRect(scrim, size = Size(size.width * 0.7f, size.height)) } }
     }
+}
+
+/** What is crossing the sky right now, if anything, and how many seconds it has been in view. */
+private class Sighting {
+    var visit by mutableStateOf<Visit?>(null)
+    var seconds by mutableFloatStateOf(0f)
+}
+
+/**
+ * The wildlife layer. It only exists while something is in view, it is the only thing recomposed when a sighting
+ * starts or ends, and the only thing redrawn as the creature moves. [tone] is the sky's colour where creatures fly;
+ * [stills] are the frozen sightings of a test or preview.
+ */
+@Composable
+private fun SightingLayer(sighting: Sighting, stills: List<Pair<Visit, Float>>, tone: Color, visibility: Float) {
+    val visit = sighting.visit
+    if (visit == null && stills.isEmpty()) return
+    Canvas(Modifier.fillMaxSize().graphicsLayer()) {
+        stills.forEach { (v, t) -> v.draw(this, t, tone, visibility) }
+        visit?.draw(this, sighting.seconds, tone, visibility)
+    }
+}
+
+/**
+ * Now and then something alive crosses the sky: a bird, a flock, a squirrel (see Wildlife.kt). Between sightings
+ * this only sleeps. During one it ticks [Sighting.seconds], which the wildlife layer reads as it draws.
+ */
+@Composable
+private fun rememberSighting(on: Boolean, season: Season, sky: Sky, sunElev: Float, wind: Float, date: LocalDate): Sighting {
+    val sighting = remember { Sighting() }
+    // Read when a sighting is chosen, so it suits the weather and the light at that moment, not when the sky first appeared.
+    val choose = rememberUpdatedState { r: Random -> Wildlife.pick(r, season, sky, sunElev, wind, date) }
+    val elev = rememberUpdatedState(sunElev)
+    LaunchedEffect(on) {
+        sighting.visit = null
+        if (!on) return@LaunchedEffect
+        val r = Random(System.nanoTime())
+        fun nowMs() = System.nanoTime() / 1_000_000L
+        // The wait carries over when you leave home and come back, but a sky that has only just appeared always waits a little.
+        var wait = max(Wildlife.dueAt - nowMs(), r.nextLong(6_000L, 30_000L))
+        while (true) {
+            delay(wait)
+            // Only while the sky is really being drawn, and not while you're moving around: otherwise try again shortly.
+            val asked = System.nanoTime()
+            withFrameMillis { }
+            if (System.nanoTime() - asked > 1_000_000_000L || Browsing.active) { wait = r.nextLong(4_000L, 15_000L); continue }
+            val v = choose.value(r)
+            wait = Wildlife.gapMs(r, elev.value)
+            Wildlife.dueAt = nowMs() + wait + ((v?.duration ?: 0f) * 1000f).toLong()
+            if (v == null) continue
+            sighting.seconds = 0f
+            sighting.visit = v
+            val start = withFrameMillis { it }
+            var last = start
+            while (true) {
+                if (!v.everyFrame) delay(20) // far, slow creatures: every other frame is plenty
+                val t = withFrameMillis { it }
+                if (t - last > 700L) break // the screen was away: end the sighting rather than jump it across the sky
+                last = t
+                if ((t - start) / 1000f >= v.duration) break
+                sighting.seconds = (t - start) / 1000f
+            }
+            sighting.visit = null
+        }
+    }
+    return sighting
 }
 
 /**
