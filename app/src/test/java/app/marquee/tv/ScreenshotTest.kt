@@ -254,7 +254,7 @@ class ScreenshotTest {
     /**
      * Wildlife, frozen part-way across the Dashboard's sky. Each sighting is (creature, seed, how far through its
      * crossing). In the app only one crosses at a time, a minute or two apart; here a few share the frame, and
-     * between them the three pictures show all eleven creatures.
+     * between them the three pictures show all ten creatures.
      */
     private fun wildlife(sky: Sky, hour: Int, minute: Int, vararg sightings: Triple<app.marquee.tv.ui.components.Creature, Int, Float>) {
         java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"))
@@ -284,6 +284,5 @@ class ScreenshotTest {
         Triple(app.marquee.tv.ui.components.Creature.STARLINGS, 7, 0.5f), Triple(app.marquee.tv.ui.components.Creature.CROWS, 4, 0.5f))
 
     @Test fun wildlifeAtNight() = wildlife(Sky.CLEAR, 22, 0,
-        Triple(app.marquee.tv.ui.components.Creature.OWL, 2, 0.5f), Triple(app.marquee.tv.ui.components.Creature.BATS, 3, 0.45f),
-        Triple(app.marquee.tv.ui.components.Creature.FLYING_SQUIRREL, 4, 0.5f))
+        Triple(app.marquee.tv.ui.components.Creature.OWL, 2, 0.5f), Triple(app.marquee.tv.ui.components.Creature.BATS, 3, 0.45f))
 }

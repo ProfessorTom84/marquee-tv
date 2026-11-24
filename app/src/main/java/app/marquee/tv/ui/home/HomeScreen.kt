@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -115,9 +116,68 @@ fun HomeScreen(vm: MarqueeVm, nav: Nav) {
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun rememberHomeListState() = androidx.compose.foundation.lazy.rememberLazyListState(
+internal fun rememberHomeListState() = androidx.compose.foundation.lazy.rememberLazyListState(
     cacheWindow = androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 1f),
 )
+
+/**
+ * Where focus is among the rows. Plain fields: written as focus moves, read when new picks arrive, never observed
+ * (so moving between cards recomposes nothing).
+ */
+private class Place {
+    var row: String? = null       // the row that has focus; null on the top bar, the cards, the apps, or nowhere
+    var card: String? = null      // the card last focused; null right after going back to the top (the first card)
+    var firstRow: String? = null  // the first row and its first card, as last shown
+    var firstCard: String? = null
+    fun focus(key: String, has: Boolean) { if (has) row = key else if (row == key) row = null }
+}
+
+/**
+ * Fresh picks replace the rows a few seconds after a restart, each time you come back to Marquee, and while the TV
+ * sits idle. If the card you were on is no longer in its row, Compose hands focus to whatever is nearest: usually a
+ * row or two down, which scrolls the top of the page out of sight. So: on the first card you stay on the first card
+ * (the new one); on a card that has gone you go back to the top; anywhere else, nothing moves.
+ */
+@Composable
+private fun KeepPlace(home: app.marquee.tv.recs.HomeData?, firstRow: String?, place: Place, toTop: () -> Unit) {
+    val top by androidx.compose.runtime.rememberUpdatedState(toTop)
+    // Read while composing: the rows haven't been rebuilt yet, so this is still where focus was.
+    val before = remember(home) {
+        Place().also { it.row = place.row; it.card = place.card; it.firstRow = place.firstRow; it.firstCard = place.firstCard }
+    }
+    LaunchedEffect(home) {
+        val rows = home?.rows.orEmpty()
+        place.firstRow = firstRow
+        place.firstCard = rows.firstOrNull { it.key == firstRow }?.items?.firstOrNull()?.id
+        val row = before.row ?: return@LaunchedEffect
+        val onFirstCard = row == before.firstRow && (before.card == null || before.card == before.firstCard)
+        val stillThere = rows.any { r -> r.key == row && r.items.any { it.id == before.card } }
+        if (onFirstCard || !stillThere) top()
+    }
+}
+
+/**
+ * Moving down the page keeps the row you're on about a third of the way down the screen (Compose's own rule on a
+ * TV). The first row is the exception: while it has focus the page rests at the very top, so the clock and the cards
+ * above it stay in view. Without this, the first card taking focus when Marquee starts nudged the page down and hid them.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private class RestAtTop(
+    private val list: androidx.compose.foundation.lazy.LazyListState,
+    private val firstRow: Any,
+    private val elsewhere: androidx.compose.foundation.gestures.BringIntoViewSpec,
+    private val onFirstRow: () -> Boolean,
+) : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    private var rest = Int.MIN_VALUE // where the first row sits with the page at the very top
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        if (!onFirstRow()) return elsewhere.calculateScrollDistance(offset, size, containerSize)
+        val row = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == firstRow }
+        if (row != null && list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) rest = row.offset
+        return if (row != null && rest != Int.MIN_VALUE) (row.offset - rest).toFloat()
+        else elsewhere.calculateScrollDistance(offset, size, containerSize)
+    }
+}
 
 private fun cycleProfile(vm: MarqueeVm) = vm.app.store.update { it.copy(activeProfile = (it.activeProfile + 1) % it.profiles.size) }
 
@@ -126,6 +186,9 @@ private fun openTitle(nav: Nav, vm: MarqueeVm, t: Title) {
 }
 
 // ============================ Dashboard ============================
+
+/** "For you": the row the Dashboard opens on. */
+private const val FIRST_ROW = app.marquee.tv.recs.FeedLayout.FOR_YOU
 
 @Composable
 fun DashboardHome(vm: MarqueeVm, nav: Nav) {
@@ -141,18 +204,75 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     val preferredYt = remember(s, apps) { vm.app.apps.preferredYouTube(s) }
     val orderedApps = remember(apps, s.services, s.appOrder, s.hiddenApps, preferredYt) { orderedApps(apps, s, preferredYt, vm.app.apps.plexPlayerPackage(s)) }
 
-    // One calm background for everything: it never changes with the card you're on.
+    // Continue-watching takes the calendar's place when no calendar is connected.
+    val resume = remember(home) { home?.rows?.firstOrNull { it.key == "continue" }?.items?.firstOrNull() }
+
+    Box(Modifier.fillMaxSize()) {
+        // One calm background for everything: it never changes with the card you're on.
+        DashboardBackground(s.background, weather, photo)
+        DashboardPage(
+            home, vm.homeTaps, onOpen = { openTitle(nav, vm, it) },
+            topBar = {
+                DashboardClock(s.profile.name, weather?.summary)
+                Spacer(Modifier.weight(1f))
+                PillButton("Pick together", icon = { androidx.tv.material3.Icon(app.marquee.tv.ui.components.MarqueeIcons.People, null, modifier = Modifier.size(15.dp)) }, onClick = { nav.go(Screen.PickTogether) })
+                Spacer(Modifier.width(10.dp))
+                TopActions(s, { nav.go(Screen.Search) }, { nav.go(Screen.Settings()) }, { vm.app.apps.openSystemSettings() }, { cycleProfile(vm) })
+            },
+            cards = {
+                Box {
+                    Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        WeatherCard(weather, s.cityName, s.hasLocation, Modifier.width(if (vm.app.calendar.configured || resume != null) 240.dp else 360.dp).fillMaxHeight())
+                        when {
+                            vm.app.calendar.configured -> CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
+                            resume != null -> ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
+                        }
+                        if (s.news && !s.profile.kidSafe) NewsCard(news, s.cityName.isBlank(), Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.News(it)) }
+                        else Spacer(Modifier.weight(1f))
+                    }
+                }
+            },
+            apps = { AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm) },
+            empty = { EmptyState(loading, s.tmdbKey.isBlank() && !s.plexReady, nav) },
+        )
+        if (s.background == "PHOTO" && photo != null) Text(
+            "Photo · ${photo!!.photographer} on Unsplash", style = T.sans(8.sp, color = Color(0x99FFFFFF)),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 10.dp),
+        )
+    }
+}
+
+/**
+ * The Dashboard's page: the top bar, the cards, "For you", the apps, then every other row; and where focus and the
+ * page rest. It takes plain data and the pieces to show (no view model), so HomeFocusTest can run it on a simulated
+ * TV, press remote buttons and check where the highlight and the page end up.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun DashboardPage(
+    home: app.marquee.tv.recs.HomeData?,
+    homeTaps: kotlinx.coroutines.flow.Flow<Unit>,
+    onOpen: (Title) -> Unit,
+    topBar: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+    cards: @Composable () -> Unit,
+    apps: @Composable () -> Unit,
+    empty: @Composable () -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberHomeListState(),
+) {
     val focusedId = remember { mutableStateOf<String?>(null) }
-    val onFocus: (Title) -> Unit = remember { { t -> focusedId.value = t.id } }
-    val listState = rememberHomeListState()
+    val place = remember { Place() }
+    val onFocus: (Title) -> Unit = remember { { t -> focusedId.value = t.id; place.card = t.id } }
     var resetTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // Scroll up, refocus the first card, then settle at the very top again (focusing nudges the list).
-    fun backToTop() { resetTick++; focusedId.value = null; scope.launch { listState.scrollToItem(0); delay(320); listState.animateScrollToItem(0) } }
+    // Scroll up and refocus the first card (then make sure of the very top, in case the page was still moving).
+    fun backToTop() { resetTick++; focusedId.value = null; place.card = null; scope.launch { listState.scrollToItem(0); delay(320); listState.animateScrollToItem(0) } }
     // Home on the remote: back to the top, first card focused (like Google TV).
-    LaunchedEffect(Unit) { vm.homeTaps.collect { backToTop() } }
+    LaunchedEffect(Unit) { homeTaps.collect { backToTop() } }
+    KeepPlace(home, FIRST_ROW, place) { backToTop() }
+    val tvScroll = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+    val pageScroll = remember(listState, tvScroll) { RestAtTop(listState, FIRST_ROW, tvScroll) { place.row == FIRST_ROW } }
     // Back: first return to the top; at the top, Back starts the screensaver (handled in Root).
-    val firstId = home?.rows?.firstOrNull { it.key == "tonight" }?.items?.firstOrNull()?.id
+    val firstId = home?.rows?.firstOrNull { it.key == FIRST_ROW }?.items?.firstOrNull()?.id
     val awayFromTop by remember(firstId) {
         androidx.compose.runtime.derivedStateOf {
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 40 || (focusedId.value != null && focusedId.value != firstId)
@@ -161,57 +281,31 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     androidx.activity.compose.BackHandler(enabled = awayFromTop) { backToTop() }
     val reset: Any? = resetTick.takeIf { it > 0 }
 
-    // Continue-watching takes the calendar's place when no calendar is connected.
-    val resume = remember(home) { home?.rows?.firstOrNull { it.key == "continue" }?.items?.firstOrNull() }
-
-    run {
-        Box(Modifier.fillMaxSize()) {
-            DashboardBackground(s.background, weather, photo)
-            LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 22.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    // The top bar fades away as you scroll into the rows (read in the draw phase: no recomposition).
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp).graphicsLayer {
-                        alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 160f).coerceIn(0f, 1f)
-                        // Fade each glyph/shape directly instead of via an offscreen buffer (cheaper on the TV's GPU).
-                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
-                    }, verticalAlignment = Alignment.CenterVertically) {
-                        DashboardClock(s.profile.name, weather?.summary)
-                        Spacer(Modifier.weight(1f))
-                        PillButton("Pick together", icon = { androidx.tv.material3.Icon(app.marquee.tv.ui.components.MarqueeIcons.People, null, modifier = Modifier.size(15.dp)) }, onClick = { nav.go(Screen.PickTogether) })
-                        Spacer(Modifier.width(10.dp))
-                        TopActions(s, { nav.go(Screen.Search) }, { nav.go(Screen.Settings()) }, { vm.app.apps.openSystemSettings() }, { cycleProfile(vm) })
-                    }
-                }
-                item(key = "cards", contentType = "cards") {
-                    Box {
-                        Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            WeatherCard(weather, s.cityName, s.hasLocation, Modifier.width(if (vm.app.calendar.configured || resume != null) 240.dp else 360.dp).fillMaxHeight())
-                            when {
-                                vm.app.calendar.configured -> CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
-                                resume != null -> ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
-                            }
-                            if (s.news && !s.profile.kidSafe) NewsCard(news, s.cityName.isBlank(), Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.News(it)) }
-                            else Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-                val rows = home?.rows.orEmpty().distinctBy { it.key }
-                if (rows.isEmpty()) item { EmptyState(loading, s.tmdbKey.isBlank() && !s.plexReady, nav) }
-                rows.firstOrNull { it.key == "tonight" }?.let { r ->
-                    item(key = "tonight", contentType = "row") {
-                        Column {
-                            SectionHeader(r.title, r.subtitle, Modifier.padding(start = 48.dp, top = 8.dp))
-                            MediaRow(r.items, 220.dp, 124.dp, onFocus = onFocus, onClick = { openTitle(nav, vm, it) }, initialFocus = true, resetKey = reset)
-                        }
-                    }
-                }
-                item(key = "apps", contentType = "apps") { AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm) }
-                rows.filter { it.key != "tonight" && it.key != "apps" && it.key != "cards" }.forEach { r -> item(key = r.key, contentType = "row") { RowBlock(r, vm, nav, onFocus, reset) } }
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides pageScroll) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 22.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                // The top bar fades away as you scroll into the rows (read in the draw phase: no recomposition).
+                Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp).graphicsLayer {
+                    alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 160f).coerceIn(0f, 1f)
+                    // Fade each glyph/shape directly instead of via an offscreen buffer (cheaper on the TV's GPU).
+                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                }, verticalAlignment = Alignment.CenterVertically, content = topBar)
             }
-            if (s.background == "PHOTO" && photo != null) Text(
-                "Photo · ${photo!!.photographer} on Unsplash", style = T.sans(8.sp, color = Color(0x99FFFFFF)),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 10.dp),
-            )
+            item(key = "cards", contentType = "cards") { cards() }
+            val rows = home?.rows.orEmpty().distinctBy { it.key }
+            if (rows.isEmpty()) item { empty() }
+            rows.firstOrNull { it.key == FIRST_ROW }?.let { r ->
+                item(key = FIRST_ROW, contentType = "row") {
+                    Column(Modifier.onFocusChanged { place.focus(FIRST_ROW, it.hasFocus) }) {
+                        SectionHeader(r.title, r.subtitle, Modifier.padding(start = 48.dp, top = 8.dp))
+                        MediaRow(r.items, 220.dp, 124.dp, onFocus = onFocus, onClick = onOpen, initialFocus = true, resetKey = reset)
+                    }
+                }
+            }
+            item(key = "apps", contentType = "apps") { apps() }
+            rows.filter { it.key != FIRST_ROW && it.key != "apps" && it.key != "cards" }.forEach { r ->
+                item(key = r.key, contentType = "row") { RowBlock(r, onOpen, onFocus, reset, Modifier.onFocusChanged { place.focus(r.key, it.hasFocus) }) }
+            }
         }
     }
 }
@@ -261,13 +355,13 @@ fun ResumeCard(t: Title, modifier: Modifier, onClick: () -> Unit) {
 }
 
 @Composable
-fun RowBlock(r: DataRow, vm: MarqueeVm, nav: Nav, onFocus: (Title) -> Unit = {}, resetKey: Any? = null) {
-    Column {
+fun RowBlock(r: DataRow, onOpen: (Title) -> Unit, onFocus: (Title) -> Unit = {}, resetKey: Any? = null, modifier: Modifier = Modifier) {
+    Column(modifier) {
         SectionHeader(r.title, r.subtitle, Modifier.padding(start = 48.dp, top = 4.dp))
         val yt = r.key == "youtube"
         MediaRow(
             r.items, if (yt) 190.dp else 170.dp, if (yt) 107.dp else 96.dp,
-            onFocus = onFocus, onClick = { openTitle(nav, vm, it) }, resetKey = resetKey,
+            onFocus = onFocus, onClick = onOpen, resetKey = resetKey,
         )
     }
 }
@@ -425,12 +519,14 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
     // Rows write focus here; the hero (its own composable) follows once focus settles, so moving between cards
     // never recomposes this whole screen.
     val focusState = remember { mutableStateOf<Title?>(null) }
-    val onFocus: (Title) -> Unit = remember { { t -> focusState.value = t } }
+    val cinePlace = remember { Place() }
+    val onFocus: (Title) -> Unit = remember { { t -> focusState.value = t; cinePlace.card = t.id } }
     val cineList = rememberHomeListState()
     var cineReset by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val cineScope = androidx.compose.runtime.rememberCoroutineScope()
-    fun cineTop() { cineReset++; focusState.value = null; cineScope.launch { cineList.scrollToItem(0); delay(320); cineList.animateScrollToItem(0) } }
+    fun cineTop() { cineReset++; focusState.value = null; cinePlace.card = null; cineScope.launch { cineList.scrollToItem(0); delay(320); cineList.animateScrollToItem(0) } }
     LaunchedEffect(Unit) { vm.homeTaps.collect { cineTop() } }
+    KeepPlace(home, home?.rows?.firstOrNull { it.key != "apps" }?.key, cinePlace) { cineTop() }
     val cineAway by remember { androidx.compose.runtime.derivedStateOf { cineList.firstVisibleItemIndex > 0 || focusState.value != null && focusState.value?.id != home?.rows?.firstOrNull()?.items?.firstOrNull()?.id } }
     androidx.activity.compose.BackHandler(enabled = cineAway) { cineTop() }
     val preferredYt = remember(s, apps) { vm.app.apps.preferredYouTube(s) }
@@ -483,7 +579,7 @@ private fun CinematicContent(vm: MarqueeVm, nav: Nav) {
         ) {
             rows.forEachIndexed { i, r ->
                 item(key = r.key, contentType = "row") {
-                    Column {
+                    Column(Modifier.onFocusChanged { cinePlace.focus(r.key, it.hasFocus) }) {
                         SectionHeader(r.title, if (i == 0) r.subtitle else "", Modifier.padding(start = 48.dp))
                         val yt = r.key == "youtube"
                         MediaRow(r.items, if (yt) 190.dp else 186.dp, if (yt) 107.dp else 105.dp, onFocus = onFocus, onClick = { openTitle(nav, vm, it) }, initialFocus = i == 0, resetKey = cineReset.takeIf { it > 0 })

@@ -49,7 +49,7 @@ import kotlin.random.Random
  *    wheeling on a thermal, butterflies in the warm months, and a squirrel out along a branch that dips into view
  *    under its weight.
  *  - Around sunset: starlings gathering into a murmuration (autumn and winter), crows heading to roost, bats.
- *  - After dark: a barn owl on a hunting pass, bats, and a flying squirrel gliding down between the trees.
+ *  - After dark: a barn owl on a hunting pass, and bats, picked out pale against the night.
  *  - Nothing flies in a storm, and little in rain.
  *
  * A sighting is fixed the moment it is picked, so drawing it is a pure function of how long it has been in view:
@@ -61,7 +61,7 @@ import kotlin.random.Random
  * painted once, before it appears, into one picture (a [Sheet]); every frame then only places pieces of it.
  */
 
-enum class Creature { SONGBIRDS, FLOCK, CROWS, GEESE, HAWK, STARLINGS, BUTTERFLIES, SQUIRREL, OWL, BATS, FLYING_SQUIRREL }
+enum class Creature { SONGBIRDS, FLOCK, CROWS, GEESE, HAWK, STARLINGS, BUTTERFLIES, SQUIRREL, OWL, BATS }
 
 /**
  * One sighting: a creature, or a group of them, crossing the sky once. Every member is out of view at 0 seconds
@@ -164,8 +164,7 @@ object Wildlife {
             }
             else -> {
                 add(Creature.OWL, if (wet) 0.3f else 2f)
-                add(Creature.BATS, bats * 0.7f)
-                add(Creature.FLYING_SQUIRREL, if (wet) 0.2f else if (snow) 0.5f else if (season == Season.WINTER) 0.8f else 1.5f)
+                add(Creature.BATS, bats * 1.3f)
             }
         }
         return m
@@ -198,7 +197,6 @@ object Wildlife {
             Creature.SQUIRREL -> SquirrelOnABranch(r, season)
             Creature.OWL -> Owl(r)
             Creature.BATS -> Bats(r)
-            Creature.FLYING_SQUIRREL -> Glider(r)
         }
     }
 
@@ -208,7 +206,7 @@ object Wildlife {
      * together from the first moment and for several seconds after.
      */
     fun parade(season: Season): List<Pair<Visit, Float>> = listOf(
-        Triple(Creature.GEESE, 42, 0.4f), Triple(Creature.FLOCK, 13, 0.25f), Triple(Creature.CROWS, 10, 0.3f), Triple(Creature.STARLINGS, 14, 0.35f),
+        Triple(Creature.GEESE, 42, 0.4f), Triple(Creature.FLOCK, 31, 0.18f), Triple(Creature.CROWS, 10, 0.3f), Triple(Creature.STARLINGS, 14, 0.35f),
     ).map { (creature, seed, from) -> of(creature, seed, season).let { it to it.duration * from } }
 }
 
@@ -245,8 +243,20 @@ class Light internal constructor() {
     internal var sky = Color.Unspecified; private set
     internal var ink = Color.Black; private set
     private val filters = arrayOfNulls<ColorFilter>(STEPS + 1)
+    private var dark: ColorFilter? = null
 
-    internal fun set(to: Color) { if (to != sky) { sky = to; ink = inkFor(to); filters.fill(null) } }
+    internal fun set(to: Color) { if (to != sky) { sky = to; ink = inkFor(to); filters.fill(null); dark = null } }
+
+    /**
+     * The light on something dark by nature, a bat: against a sky with any light left in it, it is left as dark as
+     * it is, a crisp shape; once the sky is darker than it is, it is picked out pale and silvery instead, or it
+     * would not be seen at all.
+     */
+    internal fun onDark(): ColorFilter = dark ?: run {
+        val night = 1f - ramp(0.02f, 0.12f, ramp(0.012f, 0.2f, sky.luminance()))
+        val keep = mix(0.92f, 0.55f, night)
+        ColorFilter.lighting(Color(keep, keep, keep), Color(0.3f * night, 0.34f * night, 0.47f * night))
+    }.also { dark = it }
 
     /** The light on something [far] away: 0 close by, 1 a long way off. The same few filters serve frame after frame. */
     internal fun at(far: Float): ColorFilter {
@@ -468,11 +478,15 @@ internal class Starlings(r: Random) : Visit(Creature.STARLINGS) {
 
 
 // =====================================================================================
-//  Bats, a flying squirrel and butterflies.
+//  Bats and butterflies.
 // =====================================================================================
 
-/** A bat seen head-on, wings at angle [a] above level: the skin of its wings into [skin], with a scalloped edge between the fingers, and its body, head and ears into [body]. */
-private fun batInto(o: Outline, skin: Path, body: Path, a: Float) {
+/**
+ * A bat seen head-on, wings at angle [a] above level: the skin of its wings into [skin], with a scalloped edge
+ * between the fingers; its body, head and ears into [body]; and the line of its arm and longest finger, where the
+ * light catches, into [edge].
+ */
+private fun batInto(o: Outline, skin: Path, body: Path, edge: Path, a: Float) {
     val sx = 0.07f; val sy = -0.02f
     val rx = sx + 0.40f * cos(a + 0.45f); val ry = sy - 0.40f * sin(a + 0.45f)       // wrist
     val tx = rx + 0.62f * cos(a - 0.30f); val ty = ry - 0.62f * sin(a - 0.30f)       // wingtip
@@ -486,16 +500,20 @@ private fun batInto(o: Outline, skin: Path, body: Path, a: Float) {
             .to(k * mix((gx + hx) / 2f, rx, 0.35f), mix((gy + hy) / 2f, ry, 0.35f)).tip(k * hx, hy)
             .to(k * mix((hx + fx) / 2f, rx, 0.25f), mix((hy + fy) / 2f, ry, 0.25f)).tip(k * fx, fy)
             .into(skin)
+        edge.moveTo(k * sx, sy - 0.01f); edge.lineTo(k * rx, ry - 0.025f); edge.lineTo(k * tx, ty)
         k = -1f
     }
     o.start().to(0f, 0.34f).to(-0.085f, 0.17f).to(-0.085f, -0.05f).to(-0.075f, -0.17f).tip(-0.085f, -0.31f).to(-0.025f, -0.215f)
         .to(0.025f, -0.215f).tip(0.085f, -0.31f).to(0.075f, -0.17f).to(0.085f, -0.05f).to(0.085f, 0.17f).into(body)
 }
 
-/** A few bats, each on its own jinking path after insects: the last light shows through the skin of their wings. */
+/**
+ * Several bats, each on its own jinking path after insects. At dusk they are crisp dark shapes against the last
+ * light, which catches the line of each arm; after dark they are picked out pale against the night.
+ */
 private class Bats(r: Random) : Visit(Creature.BATS) {
-    private val n = 2 + r.nextInt(4)
-    private val wing = FloatArray(n) { r.between(24f, LARGEST) }
+    private val n = 3 + r.nextInt(5)
+    private val wing = FloatArray(n) { r.between(34f, LARGEST) }
     private val delay = FloatArray(n) { if (it == 0) 0f else r.between(0.3f, 3.6f) }
     private val cross = FloatArray(n) { r.between(4.5f, 6.5f) }
     private val dir = FloatArray(n) { r.side() }
@@ -505,32 +523,33 @@ private class Bats(r: Random) : Visit(Creature.BATS) {
     private val period = FloatArray(n) { r.between(0.16f, 0.2f) }
     override val duration = (0 until n).maxOf { delay[it] + cross[it] }
     override val count get() = n
-    override val reach = 46f
+    override val reach = 64f
     private var sheet: Sheet? = null
     private var bakedFor = 0f
 
     private fun swerve(i: Int, k: Int, t: Float) = sin(wobble[i * 8 + k * 2] * t + wobble[i * 8 + k * 2 + 1])
 
     override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
-        val sc = h / 1080f; val u = ((t - delay[i]) / cross[i]).coerceIn(0f, 1f); val m = (reach + 80f) * sc
+        val sc = h / 1080f; val u = ((t - delay[i]) / cross[i]).coerceIn(0f, 1f); val m = (reach + 110f) * sc
         val along = -m + u * (w + 2f * m)
         return Offset(
-            (if (dir[i] > 0f) along else w - along) + (45f * swerve(i, 0, t) + 28f * swerve(i, 1, t)) * sc,
-            h * mix(y0[i], y1[i], u) + (38f * swerve(i, 2, t) + 22f * swerve(i, 3, t)) * sc,
+            (if (dir[i] > 0f) along else w - along) + (56f * swerve(i, 0, t) + 34f * swerve(i, 1, t)) * sc,
+            h * mix(y0[i], y1[i], u) + (44f * swerve(i, 2, t) + 26f * swerve(i, 3, t)) * sc,
         )
     }
 
     override fun prepare(h: Float) {
         if (bakedFor == h) return
         val o = Outline(); val s = LARGEST * h / 1080f; val cell = (s * 2.5f).toInt() + 4
-        val fur = Color(0xFF2B211C); val skinColour = Color(0xFF3A2A24)
+        val fur = Color(0xFF1F1713); val skinColour = Color(0xFF2E211B)
         sheet = Sheet(BEATS, cell, cell) { k ->
-            val skin = Path(); val body = Path()
-            batInto(o, skin, body, mix(-0.5f, 0.8f, beat(k / BEATS.toFloat())))
+            val skin = Path(); val body = Path(); val edge = Path()
+            batInto(o, skin, body, edge, mix(-0.5f, 0.8f, beat(k / BEATS.toFloat())))
             withTransform({ scale(s, s, Offset.Zero) }) {
-                drawPath(skin, skinColour, 0.78f)                        // thin skin: a little of the sky shows through
-                drawPath(skin, fur, 0.9f, Stroke(0.035f))                // the arm and fingers that stretch it
+                drawPath(skin, skinColour, 0.9f)                         // thin skin: a very little of the sky shows through
+                drawPath(skin, fur, 1f, Stroke(0.03f))                   // the fingers that stretch it
                 drawPath(body, fur)
+                drawPath(edge, Color(0xFFC9B39A), 0.6f, Stroke(0.028f, cap = StrokeCap.Round)) // light along the arm
             }
         }
         bakedFor = h
@@ -543,7 +562,7 @@ private class Bats(r: Random) : Visit(Creature.BATS) {
         val w = size.width; val h = size.height
         prepare(h)
         val pages = sheet ?: return
-        val filter = light.at(0.25f)
+        val filter = light.onDark()
         for (i in 0 until n) {
             if (t < delay[i] || t > delay[i] + cross[i]) continue
             val at = place(i, t, w, h); val k = wing[i] / LARGEST
@@ -555,68 +574,7 @@ private class Bats(r: Random) : Visit(Creature.BATS) {
         }
     }
 
-    private companion object { const val BEATS = 8; const val LARGEST = 32f } // poses through one wingbeat; the longest wing
-}
-
-/** A flying squirrel from below, nose toward the top: (x, y, sharp) for its right half. One unit is its body. */
-private fun gliderShape(): Path {
-    val half = floatArrayOf(
-        0f, -0.76f, 0f, 0.09f, -0.68f, 0f, 0.145f, -0.57f, 0f, 0.21f, -0.53f, 1f, 0.125f, -0.45f, 0f, 0.21f, -0.40f, 0f,          // nose, cheek, ear, shoulder
-        0.52f, -0.50f, 0f, 0.70f, -0.56f, 1f, 0.66f, -0.43f, 0f, 0.585f, -0.05f, 0f, 0.64f, 0.34f, 0f, 0.73f, 0.45f, 1f, 0.57f, 0.48f, 0f, // front paw, the skin's edge, hind paw
-        0.22f, 0.42f, 0f, 0.085f, 0.50f, 0f, 0.13f, 0.72f, 0f, 0.14f, 1.02f, 0f, 0.095f, 1.22f, 0f, 0f, 1.30f, 0f,                 // rump and the flat tail
-    )
-    return Path().also { Outline().shape(half, mirror = true).into(it) }
-}
-
-/** A flying squirrel's glide: in over the top of the screen, down a long shallow slope, and out at the side. From below it is pale: cream belly, the stretched skin a shade darker, its edge dark. */
-private class Glider(r: Random) : Visit(Creature.FLYING_SQUIRREL) {
-    private val body = r.between(50f, 62f)
-    private val dir = r.side()
-    private val from = r.between(0.16f, 0.4f)     // where along the top it comes in (from the left edge, for one gliding right)
-    private val to = r.between(0.34f, 0.46f)      // how far down the side it leaves
-    private val sag = r.between(0.02f, 0.05f)
-    private val roll = r.between(0f, TAU)
-    override val duration = r.between(3.8f, 4.6f)
-    override val count get() = 1
-    override val reach = 88f
-    private var sheet: Sheet? = null
-    private var bakedFor = 0f
-
-    override fun prepare(h: Float) {
-        if (bakedFor == h) return
-        val s = body * h / 1080f; val shape = gliderShape()
-        sheet = Sheet(1, (s * 1.6f).toInt() + 4, (s * 2.9f).toInt() + 4) {
-            withTransform({ translate(0f, -0.27f * s); scale(s, s, Offset.Zero) }) {
-                drawPath(shape, Color(0xFFB7A894))
-                clipPath(shape) {
-                    // The furred body and tail down the middle, paler than the skin stretched either side of it.
-                    drawOval(Color(0xFFE9DFCE), Offset(-0.2f, -0.6f), Size(0.4f, 1.15f))
-                    drawOval(Color(0xFF9B8B78), Offset(-0.1f, 0.5f), Size(0.2f, 0.82f))
-                }
-                drawPath(shape, Color(0xFF5E5145), 0.9f, Stroke(0.03f))
-                drawCircle(Color(0xFF15110E), 0.022f, Offset(-0.075f, -0.6f)); drawCircle(Color(0xFF15110E), 0.022f, Offset(0.075f, -0.6f))
-            }
-        }
-        bakedFor = h
-    }
-
-    override fun place(i: Int, t: Float, w: Float, h: Float): Offset {
-        val sc = h / 1080f; val u = t / duration; val m = reach * sc
-        val x = mix(from * w, w + m * 1.1f, u)
-        return Offset(if (dir > 0f) x else w - x, mix(-m * 1.1f, to * h, u) + sag * h * 4f * u * (1f - u))
-    }
-
-    override fun DrawScope.paint(t: Float, light: Light, alpha: Float) {
-        val w = size.width; val h = size.height
-        prepare(h)
-        val pages = sheet ?: return
-        val p = place(0, t, w, h); val next = place(0, t + 0.05f, w, h)
-        val heading = atan2(next.y - p.y, next.x - p.x) * DEG + 5f * sin(t * 2.1f + roll)
-        val tilt = 0.9f + 0.1f * cos(t * 2.1f + roll) // rocking from side to side as it steers
-        withTransform({ translate(p.x, p.y); rotate(heading + 90f, Offset.Zero); scale(tilt, 1f, Offset.Zero) }) {
-            pages.stamp(this, 0, alpha, light.at(0.15f))
-        }
-    }
+    private companion object { const val BEATS = 8; const val LARGEST = 46f } // poses through one wingbeat; the longest wing
 }
 
 /** One side of a butterfly from above, head toward the top: forewing and hindwing. One unit is a forewing. */

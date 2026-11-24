@@ -64,7 +64,10 @@ class MainActivity : ComponentActivity() {
     private var nav: Nav? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        // A home screen starts at the top. If Android restarts Marquee after closing it in the background, it hands
+        // back where the page was scrolled to when you left, but not which card you were on: the page came back a few
+        // rows down with the highlight on whatever was nearest, and the top out of sight. Never restore that.
+        super.onCreate(null)
         (application as MarqueeApp).ensureSetupServer()
         // Compose paints every pixel itself; skipping the window background saves a full-screen fill per frame.
         window.setBackgroundDrawable(null)
@@ -81,15 +84,18 @@ class MainActivity : ComponentActivity() {
         // Pressing Home while already in Marquee returns to the top of the home screen.
         nav?.home()
         vm.onInput()
-        if (intent.getBooleanExtra(EXTRA_AMBIENT, false)) vm.ambientActive.value = true
+        if (intent.getBooleanExtra(EXTRA_AMBIENT, false)) { ambientAsked = true; vm.ambientActive.value = true }
         else vm.homeTaps.tryEmit(Unit)
     }
 
     private var resumedBefore = false
+    private var ambientAsked = false
 
     override fun onResume() {
         super.onResume()
-        vm.onInput()
+        // Coming forward counts as input, which closes Ambient: except when Ambient is what was just asked for
+        // (Google's screensaver couldn't start). This always runs right after onNewIntent, and used to undo it.
+        if (ambientAsked) ambientAsked = false else vm.onInput()
         if (resumedBefore) vm.onReturn() else resumedBefore = true
         vm.refreshApps()
     }

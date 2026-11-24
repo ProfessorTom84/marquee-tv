@@ -17,8 +17,8 @@ android {
         buildConfigField("String", "UPDATE_TOKEN", "\"${System.getenv("MARQUEE_UPDATE_TOKEN") ?: ""}\"")
         minSdk = 31
         targetSdk = 35
-        versionCode = 42
-        versionName = "0.20.0"
+        versionCode = 43
+        versionName = "0.20.1"
     }
 
     signingConfigs {
@@ -44,6 +44,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    // The focus tests (HomeFocusTest) run the real home screen on a simulated TV, which needs the app's resources.
+    testOptions { unitTests { isIncludeAndroidResources = true } }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
@@ -78,6 +80,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.compose.ui:ui-tooling-preview")
     testImplementation("junit:junit:4.13.2")
+    // A simulated Android TV for tests that press remote buttons and check where focus and the page end up.
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
 }
 
 // Release builds (the GitHub workflow) pass -Pmarquee.skipScreenshots: the screenshot tests render whole screens in a

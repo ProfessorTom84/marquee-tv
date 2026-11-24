@@ -50,6 +50,7 @@ class AmbientDreamService : DreamService(), LifecycleOwner, SavedStateRegistryOw
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        current = this
         isInteractive = false
         isFullscreen = true
         val view = ComposeView(this).apply {
@@ -76,12 +77,24 @@ class AmbientDreamService : DreamService(), LifecycleOwner, SavedStateRegistryOw
     override fun onDreamingStarted() { super.onDreamingStarted(); registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME) }
     override fun onDreamingStopped() { registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE); super.onDreamingStopped() }
     override fun onDetachedFromWindow() {
+        if (current === this) current = null
         registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         super.onDetachedFromWindow()
     }
     override fun onDestroy() {
+        if (current === this) current = null
         registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         scope.cancel(); store.clear()
         super.onDestroy()
+    }
+
+    companion object {
+        @Volatile private var current: AmbientDreamService? = null
+
+        /** Marquee's screensaver is on screen right now. */
+        val showing get() = current != null
+
+        /** Ends Marquee's screensaver, if it's the one showing (the Home button, which a screensaver never receives). */
+        fun close() { current?.let { runCatching { it.finish() } } }
     }
 }

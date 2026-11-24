@@ -33,7 +33,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Three jobs, no screen reading:
- *  1. When the stock Google TV home screen comes up, bring Marquee forward instead.
+ *  1. When Home is pressed or the stock Google TV home screen comes up, bring Marquee forward instead
+ *     (closing a screensaver first, if one is showing).
  *  2. When the stock YouTube app opens, open the preferred (ad-free) YouTube app instead.
  *  3. Show time-to-leave alerts on top of whatever is playing.
  */
@@ -54,18 +55,54 @@ class MarqueeAccessibilityService : AccessibilityService() {
     private val dreamReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
-                Intent.ACTION_DREAMING_STARTED -> if (stage > 0) {
-                    ourDream = true; stage = 0; handler.removeCallbacksAndMessages(null)
-                    hideCurtain(450) // let the screensaver draw its first frame first
+                Intent.ACTION_DREAMING_STARTED -> {
+                    dreaming = true
+                    if (stage > 0) {
+                        ourDream = true; stage = 0; handler.removeCallbacksAndMessages(null)
+                        hideCurtain(450) // let the screensaver draw its first frame first
+                    }
                 }
-                Intent.ACTION_DREAMING_STOPPED -> if (ourDream) {
-                    ourDream = false; handoffUntil = 0L
-                    lastHomeLaunch = SystemClock.elapsedRealtime()
-                    startActivity(Intent(this@MarqueeAccessibilityService, MainActivity::class.java).addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+                Intent.ACTION_DREAMING_STOPPED -> {
+                    dreaming = false
+                    if (ourDream || homeAfterScreensaver) {
+                        ourDream = false; handoffUntil = 0L
+                        openMarquee()
+                    }
                 }
             }
         }
+    }
+
+    // ---- Home while a screensaver is showing ----
+    // A screensaver sits on top of every app, so opening Marquee underneath one changes nothing you can see:
+    // Home looked dead. While a screensaver is up, the Home press is left to Android, which closes the screensaver
+    // (but stays on whatever was underneath), and Marquee comes forward as it goes.
+    private var dreaming = false
+    private var homeLeftToAndroid = false   // this press of Home (down, repeats and up) wasn't taken by Marquee
+    private var homeAfterScreensaver = false
+    // (If Android never reports the screensaver gone, stop believing in it: a stale "showing" would hand every
+    // later Home press to the Google home screen.)
+    private val openAfterScreensaver = Runnable { if (homeAfterScreensaver) { dreaming = false; openMarquee() } }
+
+    private fun screensaverShowing() = dreaming || AmbientDreamService.showing
+
+    private fun openMarquee() {
+        homeAfterScreensaver = false
+        handler.removeCallbacks(openAfterScreensaver)
+        lastHomeLaunch = SystemClock.elapsedRealtime()
+        runCatching {
+            startActivity(Intent(this, MainActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+        }
+    }
+
+    private fun homeDuringScreensaver() {
+        // Marquee goes underneath first, so it (not the Google home screen) is what the screensaver uncovers.
+        openMarquee()
+        homeAfterScreensaver = true
+        AmbientDreamService.close() // Marquee's own screensaver can simply be told to finish
+        // Open Marquee again once the screensaver has gone, or after a moment if Android never says so.
+        handler.postDelayed(openAfterScreensaver, 1200)
     }
 
     fun startGoogleScreensaver(): Boolean {
@@ -211,15 +248,17 @@ class MarqueeAccessibilityService : AccessibilityService() {
      */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode != KeyEvent.KEYCODE_HOME || !app.store.value.takeoverHome) return false
+        // Decided once per press, so Android never sees half of one.
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) homeLeftToAndroid = screensaverShowing()
+        if (homeLeftToAndroid) {
+            if (event.action == KeyEvent.ACTION_UP) { homeLeftToAndroid = false; homeDuringScreensaver() }
+            return false
+        }
         when (event.action) {
             KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) homeDownAt = event.eventTime
             KeyEvent.ACTION_UP -> {
                 if (event.eventTime - homeDownAt > 700) app.apps.openSystemSettings()
-                else {
-                    lastHomeLaunch = SystemClock.elapsedRealtime()
-                    startActivity(Intent(this, MainActivity::class.java).addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION))
-                }
+                else openMarquee()
             }
         }
         return true

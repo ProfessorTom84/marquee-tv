@@ -5,8 +5,8 @@ Marquee replaces the Google TV home screen with one built around what you alread
 - **No ads, no sponsored rows, no rentals or purchases.** Every pick is on your Plex, included in a subscription you have, or genuinely free. Ad-supported tiers are never recommended.
 - **News, read on the TV:** headlines by category (Local, State, National, Politics, Tech and Business), each with its picture. Local comes from the nearest CBS newsroom plus a news search for your city, State from a search for your state, the rest from CBS, NBC, PBS NewsHour, the BBC, Ars Technica and TechCrunch. Marquee opens every story in the background first and only lists the ones that read properly, so each one opens in full on the TV, with its photos. Marquee always identifies itself to news sites and never works around one that turns it away; those stories are simply left out.
 - **Three home styles:** Dashboard (weather, calendar and news headlines), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day.
-- **A sky with something alive in it:** the sky behind everything follows your real weather, sun and moon. Every minute or two something crosses it and is gone, drawn as itself rather than as a shadow: a cardinal, a blue jay, a robin, goldfinches or chickadees (whichever the season brings), a flock of sparrows, crows, Canada geese in a V, a red-tailed hawk circling, a squirrel out along a branch that dips into view under its weight; starlings and bats around sunset; a barn owl or a flying squirrel after dark. Each is lit by the hour, and what turns up depends on the season and the weather (butterflies only in the warm months, nothing in a storm). Settings → Weather → *Birds and wildlife* turns it off.
-- **Your choice of screensaver:** Google TV's own (Google Photos, art…) or Marquee Ambient, for both idle time and Back on the home screen. Settings shows which one Android will actually run and puts it right if it's out of step.
+- **A sky with something alive in it:** the sky behind everything follows your real weather, sun and moon. Every minute or two something crosses it and is gone, drawn as itself rather than as a shadow: a cardinal, a blue jay, a robin, goldfinches or chickadees (whichever the season brings), a flock of sparrows, crows, Canada geese in a V, a red-tailed hawk circling, a squirrel out along a branch that dips into view under its weight; starlings and bats around sunset; a barn owl, and bats picked out pale against the night, after dark. Each is lit by the hour, and what turns up depends on the season and the weather (butterflies only in the warm months, nothing in a storm). Settings → Weather → *Birds and wildlife* turns it off.
+- **Your choice of screensaver:** Google TV's own (Google Photos, art…) or Marquee Ambient, for both idle time and Back on the home screen. Settings shows which one Android will actually run and puts it right if it's out of step. Home closes either one and takes you back to Marquee.
 - **A feed built around your services, with the best of your Plex:**
   - **For you** mixes about 50% your services, 20% Plex, 15% YouTube and 15% continue watching, and never shows the same service twice in a row.
   - **A row for each service** ("New on Netflix", "Popular on Max", "Top 10 on Disney+"). Two or three services rotate in each time you come home, taking turns so no service takes over.
@@ -139,7 +139,7 @@ Requirements: JDK 17+ and the Android SDK (platform 35).
 
 ```bash
 ./gradlew assembleRelease        # app/build/outputs/apk/release/app-release.apk
-./gradlew testDebugUnitTest      # calendar parser, seasonal ribbon and screenshot tests
+./gradlew testDebugUnitTest      # logic tests, screenshot tests, and the home screen driven by remote on a simulated TV
 ./gradlew recordPaparazziDebug   # renders UI screenshots to app/src/test/snapshots
 ```
 

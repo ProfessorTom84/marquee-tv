@@ -35,7 +35,7 @@ class WildlifeTest {
     }
 
     @Test fun eachHourHasItsOwnCreatures() {
-        val nocturnal = setOf(Creature.OWL, Creature.BATS, Creature.FLYING_SQUIRREL)
+        val nocturnal = setOf(Creature.OWL, Creature.BATS)
         for (season in Season.entries) for (sky in Sky.entries) {
             assertTrue("$season $sky by day", about(season, sky, noon).none { it in nocturnal })
             assertTrue("$season $sky after dark", about(season, sky, midnight).all { it in nocturnal })
@@ -44,7 +44,7 @@ class WildlifeTest {
         assertFalse(Creature.STARLINGS in about(Season.AUTUMN, Sky.CLEAR, noon))
         assertTrue(Creature.OWL in about(Season.AUTUMN, Sky.CLEAR, midnight))
         assertTrue(Creature.SQUIRREL in about(Season.AUTUMN, Sky.CLEAR, noon))
-        assertTrue(Creature.FLYING_SQUIRREL in about(Season.AUTUMN, Sky.CLEAR, midnight))
+        assertTrue("bats are about after dark too", Creature.BATS in about(Season.AUTUMN, Sky.CLEAR, midnight))
     }
 
     @Test fun seasonsAndWeatherMatter() {

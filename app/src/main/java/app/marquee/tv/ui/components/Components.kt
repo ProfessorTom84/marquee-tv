@@ -476,6 +476,18 @@ fun BoxScope.Sheen() {
     )
 }
 
+/**
+ * Puts focus on a card that may only just have been built. A row that has been rebuilt or slid back to its start
+ * needs a frame or two before its first card exists; asking sooner fails, which used to leave focus wherever it was.
+ */
+suspend fun androidx.compose.ui.focus.FocusRequester.claim(): Boolean {
+    repeat(12) {
+        if (runCatching { requestFocus() }.getOrDefault(false)) return true
+        kotlinx.coroutines.delay(32)
+    }
+    return false
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MediaRow(
@@ -503,13 +515,18 @@ fun MediaRow(
     var didInitialFocus by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     if (initialFocus && items.isNotEmpty() && !didInitialFocus) androidx.compose.runtime.LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(150)
-        runCatching { first.requestFocus() }
+        first.claim()
         didInitialFocus = true
     }
+    // A reset acts once. A row that scrolls far out of view is rebuilt when it comes back, still holding the last
+    // reset key: it must not slide back to its first card, or take focus, a second time.
+    var seenReset by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(resetKey?.hashCode() ?: 0) }
     androidx.compose.runtime.LaunchedEffect(resetKey) {
-        if (resetKey == null) return@LaunchedEffect
+        val k = resetKey?.hashCode() ?: 0
+        if (resetKey == null || k == seenReset) return@LaunchedEffect
+        seenReset = k
         rowState.scrollToItem(0)
-        if (initialFocus) { kotlinx.coroutines.delay(60); runCatching { first.requestFocus() } }
+        if (initialFocus) { kotlinx.coroutines.delay(60); first.claim() }
     }
     PinnedRow(48.dp) {
         androidx.compose.foundation.lazy.LazyRow(
