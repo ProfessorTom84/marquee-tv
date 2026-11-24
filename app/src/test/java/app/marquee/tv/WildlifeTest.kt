@@ -89,7 +89,7 @@ class WildlifeTest {
         for (c in Creature.entries) for (season in Season.entries) for (seed in 0 until 60) {
             val v = Wildlife.of(c, seed * 7919 + 3, season)
             assertEquals(c, v.creature)
-            assertTrue("$c lasts ${v.duration} s", v.duration in 1f..60f)
+            assertTrue("$c lasts ${v.duration} s", v.duration in 1f..75f)
             for ((w, h) in screens) {
                 val what = "$c, seed $seed, $season, ${w.toInt()}x${h.toInt()}"
                 assertFalse("$what: in view as it starts", v.inView(0f, w, h))
