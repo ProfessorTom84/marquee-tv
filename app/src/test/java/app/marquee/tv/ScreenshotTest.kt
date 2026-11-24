@@ -86,12 +86,13 @@ class ScreenshotTest {
         app.marquee.tv.ui.components.SkyRendering.synchronous = true
         app.marquee.tv.ui.components.SkyRendering.stillTime = 40f
         val date = java.time.LocalDate.of(2026, 10, 10); val time = java.time.LocalTime.of(14, 14)
-        val day = Weather(61, 64, 47, Sky.PARTLY, true, "Partly cloudy", emptyList(), 0)
-        fun row(key: String, title: String, items: List<Title>) = app.marquee.tv.data.Row(key, title, "", items)
+        val day = Weather(61, 64, 47, Sky.PARTLY, true, "Partly cloudy",
+            listOf(HourForecast("3 PM", 62, Sky.PARTLY), HourForecast("4 PM", 61, Sky.PARTLY), HourForecast("5 PM", 59, Sky.CLEAR), HourForecast("6 PM", 56, Sky.CLEAR), HourForecast("7 PM", 53, Sky.CLEAR)), 0)
+        fun row(key: String, title: String, sub: String, items: List<Title>) = app.marquee.tv.data.Row(key, title, sub, items)
         val home = app.marquee.tv.recs.HomeData(null, listOf(
-            row(app.marquee.tv.recs.FeedLayout.FOR_YOU, "This afternoon for you", picks + picks.map { it.copy(id = it.id + "b", title = it.title + " II") }),
-            row(app.marquee.tv.recs.FeedLayout.CONTINUE, "Continue watching", picks.take(3).map { it.copy(id = it.id + "c", progress = 0.4f) }),
-            row(app.marquee.tv.recs.FeedLayout.PLEX, "From your Plex", picks.map { it.copy(id = it.id + "p") }),
+            row(app.marquee.tv.recs.FeedLayout.FOR_YOU, "This afternoon for you", "A mix from your services, your Plex and YouTube", picks),
+            row(app.marquee.tv.recs.FeedLayout.CONTINUE, "Continue watching", "From your Plex", picks.take(3).map { it.copy(id = it.id + "c", progress = 0.4f) }),
+            row(app.marquee.tv.recs.FeedLayout.PLEX, "From your Plex", "", picks.map { it.copy(id = it.id + "p") }),
         ), emptyList())
         val apps = listOf("Plex", "Netflix", "Max", "Hulu", "Disney+", "Prime Video", "TizenTube", "Apple TV").map { app.marquee.tv.system.TvApp(it, "pkg.$it", null, null) }
         val me = app.marquee.tv.data.Settings()
@@ -99,13 +100,25 @@ class ScreenshotTest {
             MarqueeTheme {
                 Box(Modifier.fillMaxSize()) {
                     app.marquee.tv.ui.components.LiveSky(Sky.PARTLY, null, latitude = 40.99, longitude = -73.78, date = date, now = time, grain = true,
-                        overlay = Brush.verticalGradient(0.41f to Color(0x00040610), 0.56f to Color(0xAD040610), 1f to Color(0xF2040610)))
+                        overlay = Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)))
                     app.marquee.tv.ui.home.DashboardPage(
                         home, kotlinx.coroutines.flow.MutableSharedFlow(), onOpen = {},
-                        header = { app.marquee.tv.ui.home.DashboardHeader("Tom", day, true, java.time.LocalDateTime.of(date, time)) },
-                        actions = { app.marquee.tv.ui.home.TopActions(me, {}, {}, {}, {}) },
-                        news = { app.marquee.tv.ui.home.NewsLead(news, false) {} },
-                        apps = { form, onHint -> app.marquee.tv.ui.home.AppsRow(apps, {}, {}, null, shelf = form, onHint = onHint) },
+                        topBar = {
+                            Text("2:14", style = T.serif(52.sp))
+                            Column(Modifier.padding(start = 14.dp)) {
+                                Text("Good afternoon, Tom", style = T.sans(14.sp, FontWeight.SemiBold))
+                                Text("Saturday, October 10 · partly cloudy", style = T.sans(10.sp, color = C.Cool))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            app.marquee.tv.ui.home.TopActions(me, {}, {}, {}, {})
+                        },
+                        cards = {
+                            Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                app.marquee.tv.ui.home.WeatherCard(day, "New York", true, Modifier.width(360.dp).fillMaxHeight())
+                                app.marquee.tv.ui.home.NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
+                            }
+                        },
+                        apps = { app.marquee.tv.ui.home.AppsRow(apps, {}, {}, null) },
                         empty = {},
                     )
                 }

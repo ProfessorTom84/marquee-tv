@@ -9,7 +9,7 @@ import java.util.UUID
 
 /** Home styles you can choose. AMBIENT is only the idle/clock screen (any button closes it), never a pickable style. */
 enum class HomeStyle(val label: String, val blurb: String) {
-    DASHBOARD("Dashboard", "The sky, the news, and two rows of picks at a time"),
+    DASHBOARD("Dashboard", "Weather and news up top, picks below"),
     CINEMATIC("Cinematic", "One title fills the screen, trailers play behind it"),
     AMBIENT("Ambient", "Artwork, a big clock and only what matters now");
 }

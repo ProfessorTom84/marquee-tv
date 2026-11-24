@@ -6,13 +6,18 @@ import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
@@ -33,15 +38,12 @@ import app.marquee.tv.system.TvApp
 import app.marquee.tv.ui.components.LiveSky
 import app.marquee.tv.ui.components.SkyRendering
 import app.marquee.tv.ui.home.AppsRow
-import app.marquee.tv.ui.home.DashboardHeader
 import app.marquee.tv.ui.home.DashboardPage
-import app.marquee.tv.ui.home.NewsLead
 import app.marquee.tv.ui.home.TopActions
 import app.marquee.tv.ui.theme.MarqueeTheme
 import app.marquee.tv.weather.Sky
 import app.marquee.tv.weather.Weather
 import kotlinx.coroutines.flow.MutableSharedFlow
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TestWatcher
@@ -57,7 +59,8 @@ import java.io.File
  * Pictures of the real Dashboard with the remote in use, for looking at (not a test of anything): the page is run on
  * a simulated TV, buttons are pressed, and what is on screen is saved as a PNG.
  *
- * Only runs when asked:  MARQUEE_PREVIEW=<folder> ./gradlew :app:testDebugUnitTest --tests "*HomePreview*"
+ * Only runs when asked, and on its own (it draws with a different engine from the screenshot tests, and the two
+ * can't share a process):  MARQUEE_PREVIEW=<folder> ./gradlew :app:testDebugUnitTest --tests "*HomePreview*"
  */
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -78,13 +81,9 @@ class HomePreview {
     }
     @get:Rule(order = 1) val compose = createAndroidComposeRule<ComponentActivity>()
 
-    companion object {
-        private val out = System.getenv("MARQUEE_PREVIEW")?.takeIf { it.isNotBlank() }?.let(::File)
-
-        @JvmStatic @org.junit.BeforeClass fun onlyWhenAsked() {
-            assumeTrue("set MARQUEE_PREVIEW to a folder to make the pictures", out != null)
-            out!!.mkdirs()
-        }
+    /** Where the pictures go. (The build script leaves this class out of every run unless MARQUEE_PREVIEW is set.) */
+    private val out by lazy {
+        File(checkNotNull(System.getenv("MARQUEE_PREVIEW")?.takeIf { it.isNotBlank() }) { "set MARQUEE_PREVIEW to a folder to make the pictures" }).also { it.mkdirs() }
     }
 
     private val plex = Availability(AvailKind.PLEX, "Living Room", quality = listOf("4K", "HDR10"), score = 120)
@@ -151,13 +150,25 @@ class HomePreview {
             MarqueeTheme {
                 Box(Modifier.fillMaxSize()) {
                     LiveSky(sky, null, latitude = 40.99, longitude = -73.78, date = date, now = java.time.LocalTime.of(hour, minute), grain = true,
-                        overlay = Brush.verticalGradient(0.41f to Color(0x00040610), 0.56f to Color(0xAD040610), 1f to Color(0xF2040610)))
+                        overlay = Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)))
                     DashboardPage(
                         shown, MutableSharedFlow(), onOpen = {},
-                        header = { DashboardHeader("Tom", weather, true, java.time.LocalDateTime.of(date, java.time.LocalTime.of(hour, minute))) },
-                        actions = { TopActions(settings, {}, {}, {}, {}) },
-                        news = { NewsLead(news, false) {} },
-                        apps = { form, onHint -> AppsRow(apps, {}, {}, null, shelf = form, onHint = onHint) },
+                        topBar = {
+                            androidx.tv.material3.Text("%d:%02d".format(if (hour % 12 == 0) 12 else hour % 12, minute), style = app.marquee.tv.ui.theme.T.serif(52.sp))
+                            androidx.compose.foundation.layout.Column(Modifier.padding(start = 14.dp)) {
+                                androidx.tv.material3.Text(if (hour < 12) "Good morning, Tom" else if (hour < 17) "Good afternoon, Tom" else "Good evening, Tom", style = app.marquee.tv.ui.theme.T.sans(14.sp, androidx.compose.ui.text.font.FontWeight.SemiBold))
+                                androidx.tv.material3.Text("Saturday, October 10 · ${weather.summary.lowercase()}", style = app.marquee.tv.ui.theme.T.sans(10.sp, color = app.marquee.tv.ui.theme.C.Cool))
+                            }
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                            TopActions(settings, {}, {}, {}, {})
+                        },
+                        cards = {
+                            androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                                app.marquee.tv.ui.home.WeatherCard(weather, "Brooklyn", true, Modifier.width(360.dp).fillMaxHeight())
+                                app.marquee.tv.ui.home.NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
+                            }
+                        },
+                        apps = { AppsRow(apps, {}, {}, null) },
                         empty = { androidx.tv.material3.Text("Finding tonight's picks…", style = app.marquee.tv.ui.theme.T.rowTitle, modifier = Modifier.padding(start = 48.dp, top = 20.dp)) },
                     )
                 }
@@ -176,10 +187,8 @@ class HomePreview {
         show(Sky.PARTLY, 14, 14)
         save("1-at-rest")
         press(Key.DirectionRight, 2); save("2-along-the-row")
-        press(Key.DirectionDown); save("3-continue-watching")
-        press(Key.DirectionDown); save("4-apps")
-        press(Key.DirectionDown, 2); save("5-new-on-netflix")
-        press(Key.DirectionDown, 5); save("6-far-down")
-        press(Key.DirectionUp, 10); save("7-the-news")
+        press(Key.DirectionDown); save("3-the-apps")
+        press(Key.DirectionDown, 3); save("4-three-rows-down")
+        press(Key.DirectionUp, 5); save("5-the-cards")
     }
 }

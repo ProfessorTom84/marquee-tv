@@ -156,6 +156,29 @@ private fun KeepPlace(home: app.marquee.tv.recs.HomeData?, firstRow: String?, pl
     }
 }
 
+/**
+ * Moving down the page keeps the row you're on about a third of the way down the screen (Compose's own rule on a
+ * TV). The first row is the exception: while it has focus the page rests at the very top, so the clock and the cards
+ * above it stay in view. Without this, the first card taking focus when Marquee starts nudged the page down and hid them.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private class RestAtTop(
+    private val list: androidx.compose.foundation.lazy.LazyListState,
+    private val firstRow: Any,
+    private val elsewhere: androidx.compose.foundation.gestures.BringIntoViewSpec,
+    private val onFirstRow: () -> Boolean,
+) : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    private var rest = Int.MIN_VALUE // where the first row sits with the page at the very top
+
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        if (!onFirstRow()) return elsewhere.calculateScrollDistance(offset, size, containerSize)
+        val row = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == firstRow }
+        if (row != null && list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) rest = row.offset
+        return if (row != null && rest != Int.MIN_VALUE) (row.offset - rest).toFloat()
+        else elsewhere.calculateScrollDistance(offset, size, containerSize)
+    }
+}
+
 private fun cycleProfile(vm: MarqueeVm) = vm.app.store.update { it.copy(activeProfile = (it.activeProfile + 1) % it.profiles.size) }
 
 private fun openTitle(nav: Nav, vm: MarqueeVm, t: Title) {
@@ -163,6 +186,9 @@ private fun openTitle(nav: Nav, vm: MarqueeVm, t: Title) {
 }
 
 // ============================ Dashboard ============================
+
+/** "For you": the row the Dashboard opens on. */
+private const val FIRST_ROW = app.marquee.tv.recs.FeedLayout.FOR_YOU
 
 @Composable
 fun DashboardHome(vm: MarqueeVm, nav: Nav) {
@@ -175,39 +201,44 @@ fun DashboardHome(vm: MarqueeVm, nav: Nav) {
     val photo by vm.areaPhoto.collectAsState()
     val preferredYt = remember(s, apps) { vm.app.apps.preferredYouTube(s) }
     val orderedApps = remember(apps, s.services, s.appOrder, s.hiddenApps, preferredYt) { orderedApps(apps, s, preferredYt, vm.app.apps.plexPlayerPackage(s)) }
-    val showNews = s.news && !s.profile.kidSafe
+
+    // What you were watching sits between the weather and the news.
+    val resume = remember(home) { home?.rows?.firstOrNull { it.key == "continue" }?.items?.firstOrNull() }
 
     Box(Modifier.fillMaxSize()) {
-        // One calm background for everything: it never changes with the tile you're on.
+        // One calm background for everything: it never changes with the card you're on.
         DashboardBackground(s.background, weather, photo)
         DashboardPage(
             home, vm.homeTaps, onOpen = { openTitle(nav, vm, it) },
-            header = { DashboardHeader(s.profile.name, weather, s.hasLocation) },
-            actions = { TopActions(s, { nav.go(Screen.Search) }, { nav.go(Screen.Settings()) }, { vm.app.apps.openSystemSettings() }, { cycleProfile(vm) }) },
-            news = if (showNews) ({ NewsLead(news, s.cityName.isBlank()) { nav.go(Screen.News(it)) } }) else null,
-            apps = { form, onHint -> AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm, shelf = form, onHint = onHint) },
+            topBar = {
+                DashboardClock(s.profile.name, weather?.summary)
+                Spacer(Modifier.weight(1f))
+                TopActions(s, { nav.go(Screen.Search) }, { nav.go(Screen.Settings()) }, { vm.app.apps.openSystemSettings() }, { cycleProfile(vm) })
+            },
+            cards = {
+                Box {
+                    Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        WeatherCard(weather, s.cityName, s.hasLocation, Modifier.width(if (resume != null) 240.dp else 360.dp).fillMaxHeight())
+                        if (resume != null) ResumeCard(resume, Modifier.width(320.dp).fillMaxHeight()) { openTitle(nav, vm, resume) }
+                        if (s.news && !s.profile.kidSafe) NewsCard(news, s.cityName.isBlank(), Modifier.weight(1f).fillMaxHeight()) { nav.go(Screen.News(it)) }
+                        else Spacer(Modifier.weight(1f))
+                    }
+                }
+            },
+            apps = { AppsRow(orderedApps, { openApp(vm, it) }, { nav.go(Screen.Apps) }, vm) },
             empty = { EmptyState(loading, s.tmdbKey.isBlank() && !s.plexReady, nav) },
         )
         if (s.background == "PHOTO" && photo != null) Text(
             "Photo · ${photo!!.photographer} on Unsplash", style = T.sans(8.sp, color = Color(0x99FFFFFF)),
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 8.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 10.dp),
         )
     }
 }
 
-/** The shelf moves only when the row in focus changes (see [DashboardPage]); a tile taking focus never scrolls it. */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private val StayPut = object : androidx.compose.foundation.gestures.BringIntoViewSpec {
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
-}
-
 /**
- * The Dashboard's page. The clock, the weather on one line and the news sit at the top left, the buttons at the top
- * right, and the sky is left open. At the foot is the shelf: a line naming every row, the row you are on, and the row
- * after it (see Shelf.kt). Down and Up change which row that is; nothing above the shelf ever moves.
- *
- * It takes plain data and the pieces to show (no view model), so HomeFocusTest can run it on a simulated TV, press
- * remote buttons and check where the highlight ends up.
+ * The Dashboard's page: the top bar, the cards, "For you", the apps, then every other row; and where focus and the
+ * page rest. It takes plain data and the pieces to show (no view model), so HomeFocusTest can run it on a simulated
+ * TV, press remote buttons and check where the highlight and the page end up.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -215,128 +246,117 @@ internal fun DashboardPage(
     home: app.marquee.tv.recs.HomeData?,
     homeTaps: kotlinx.coroutines.flow.Flow<Unit>,
     onOpen: (Title) -> Unit,
-    header: @Composable () -> Unit,
-    actions: @Composable () -> Unit,
-    news: (@Composable () -> Unit)?,
-    apps: @Composable (form: () -> Float, onHint: (String, Boolean) -> Unit) -> Unit,
+    topBar: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+    cards: @Composable () -> Unit,
+    apps: @Composable () -> Unit,
     empty: @Composable () -> Unit,
     listState: androidx.compose.foundation.lazy.LazyListState = rememberHomeListState(),
 ) {
-    val rows = remember(home) { shelves(home) }
-    val firstKey = rows.first().key
-    val firstTitles = rows.firstOrNull { it is Shelf.Titles } as Shelf.Titles?
     val focusedId = remember { mutableStateOf<String?>(null) }
     val place = remember { Place() }
     val onFocus: (Title) -> Unit = remember { { t -> focusedId.value = t.id; place.card = t.id } }
-    // The row you are on: the one with focus, or the one that last had it while focus is up on the news or the buttons.
-    var lastRow by remember { mutableStateOf<String?>(null) }
-    val current = lastRow?.takeIf { k -> rows.any { it.key == k } } ?: firstKey
-    val at = rows.indexOfFirst { it.key == current }.coerceAtLeast(0)
-    // The shelf follows the row you are on, and nothing else. (Until you have chosen a row it simply sits on the
-    // first one: when picks arrive above the apps, it must not stay on the apps and slide.)
-    LaunchedEffect(current, at) {
-        if (listState.firstVisibleItemIndex == at && listState.firstVisibleItemScrollOffset == 0) return@LaunchedEffect
-        if (lastRow == null) listState.scrollToItem(at) else listState.animateScrollToItem(at)
-    }
-
     var resetTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // Back to the first row with its first tile in focus.
-    fun backToTop() { resetTick++; focusedId.value = null; place.card = null; lastRow = null; scope.launch { listState.scrollToItem(0) } }
-    // Home on the remote: back to the top (like Google TV).
+    // Scroll up and refocus the first card (then make sure of the very top, in case the page was still moving).
+    fun backToTop() { resetTick++; focusedId.value = null; place.card = null; scope.launch { listState.scrollToItem(0); delay(320); listState.animateScrollToItem(0) } }
+    // Home on the remote: back to the top, first card focused (like Google TV).
     LaunchedEffect(Unit) { homeTaps.collect { backToTop() } }
-    KeepPlace(home, firstTitles?.key, place) { backToTop() }
+    KeepPlace(home, FIRST_ROW, place) { backToTop() }
+    val tvScroll = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+    val pageScroll = remember(listState, tvScroll) { RestAtTop(listState, FIRST_ROW, tvScroll) { place.row == FIRST_ROW } }
     // Back: first return to the top; at the top, Back starts the screensaver (handled in Root).
-    val firstId = firstTitles?.data?.items?.firstOrNull()?.id
-    val awayFromTop by remember(firstId, firstKey) {
-        androidx.compose.runtime.derivedStateOf { (lastRow != null && lastRow != firstKey) || (focusedId.value != null && focusedId.value != firstId) }
+    val firstId = home?.rows?.firstOrNull { it.key == FIRST_ROW }?.items?.firstOrNull()?.id
+    val awayFromTop by remember(firstId) {
+        androidx.compose.runtime.derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 40 || (focusedId.value != null && focusedId.value != firstId)
+        }
     }
     androidx.activity.compose.BackHandler(enabled = awayFromTop) { backToTop() }
     val reset: Any? = resetTick.takeIf { it > 0 }
-    var hint by remember { mutableStateOf("" to false) }
 
-    Box(Modifier.fillMaxSize()) {
-        Box(Modifier.padding(start = 48.dp, top = 28.dp)) { header() }
-        Box(Modifier.align(Alignment.TopEnd).padding(end = 48.dp, top = 40.dp)) { actions() }
-        // With nothing to recommend yet, what to do about it takes the news' place.
-        if (firstTitles == null) Box(Modifier.padding(top = 92.dp)) { empty() }
-        else if (news != null) Box(Modifier.padding(start = 48.dp, top = 108.dp)) { news() }
-
-        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(bottom = 27.5.dp).height(ShelfSize.height + 4.dp)) {
-            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides StayPut) {
-                LazyColumn(
-                    Modifier.align(Alignment.BottomStart).fillMaxWidth().height(ShelfSize.height), state = listState,
-                    // (Room for the last row to come to the top, with nothing under it.)
-                    contentPadding = PaddingValues(bottom = ShelfSize.head + ShelfSize.nextTile),
-                ) {
-                    rows.forEachIndexed { i, shelf ->
-                        item(key = shelf.key, contentType = if (shelf is Shelf.Apps) "apps" else "row") {
-                            val here = shelf.key == current
-                            when (shelf) {
-                                is Shelf.Titles -> ShelfRow(shelf.title, here, Modifier.onFocusChanged { if (it.hasFocus) lastRow = shelf.key; place.focus(shelf.key, it.hasFocus) }) { rowT ->
-                                    ShelfTitles(shelf.data.items, here, rowT, onFocus, onOpen, initialFocus = i == 0, resetKey = reset)
-                                }
-                                // (The apps aren't picks: when new picks arrive, focus on an app is left alone.)
-                                Shelf.Apps -> ShelfRow(shelf.title, here, Modifier.onFocusChanged { if (it.hasFocus) lastRow = shelf.key }) { rowT ->
-                                    apps(rowT) { text, strong -> hint = text to strong }
-                                }
-                            }
-                        }
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides pageScroll) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 22.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                // The top bar fades away as you scroll into the rows (read in the draw phase: no recomposition).
+                Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp).graphicsLayer {
+                    alpha = if (listState.firstVisibleItemIndex > 0) 0f else (1f - listState.firstVisibleItemScrollOffset / 160f).coerceIn(0f, 1f)
+                    // Fade each glyph/shape directly instead of via an offscreen buffer (cheaper on the TV's GPU).
+                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                }, verticalAlignment = Alignment.CenterVertically, content = topBar)
+            }
+            item(key = "cards", contentType = "cards") { cards() }
+            val rows = home?.rows.orEmpty().distinctBy { it.key }
+            if (rows.isEmpty()) item { empty() }
+            rows.firstOrNull { it.key == FIRST_ROW }?.let { r ->
+                item(key = FIRST_ROW, contentType = "row") {
+                    Column(Modifier.onFocusChanged { place.focus(FIRST_ROW, it.hasFocus) }) {
+                        SectionHeader(r.title, r.subtitle, Modifier.padding(start = 48.dp, top = 8.dp))
+                        MediaRow(r.items, 220.dp, 124.dp, onFocus = onFocus, onClick = onOpen, initialFocus = true, resetKey = reset)
                     }
                 }
             }
-            // Over the top of the shelf, where the row in focus keeps a clear strip for its tile's glow.
-            RowIndex(rows, current, Modifier.align(Alignment.TopStart).fillMaxWidth())
-            if (hint.first.isNotBlank()) ShelfHint(hint.first, hint.second, Modifier.align(Alignment.TopEnd).padding(end = 48.dp, top = 4.dp + ShelfSize.row + 8.dp))
-        }
-    }
-}
-
-private val HeaderShadow = androidx.compose.ui.graphics.Shadow(Color(0x8C040610), androidx.compose.ui.geometry.Offset(0f, 2f), 14f)
-
-/**
- * Clock, greeting, and the date with the weather on one line. The only part of the Dashboard that changes on the
- * minute, so only it recomposes.
- */
-@Composable
-internal fun DashboardHeader(profileName: String, weather: app.marquee.tv.weather.Weather?, hasLocation: Boolean, now: java.time.LocalDateTime = rememberNow()) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(clockText(now), style = T.serif(58.sp, spacing = (-0.5).sp).copy(shadow = HeaderShadow))
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(greeting(now, profileName), style = T.sans(15.sp, FontWeight.SemiBold).copy(shadow = HeaderShadow))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val line = T.sans(11.sp, FontWeight.Medium, Color(0xFFE3E7F0)).copy(shadow = HeaderShadow)
-                Text(dateText(now), style = line)
-                val after = weather?.let { weatherLine(it, now.hour) } ?: "Add your city in Settings for the weather".takeIf { !hasLocation }
-                if (after != null) {
-                    Box(Modifier.size(2.5.dp).clip(CircleShape).background(C.Cool))
-                    if (weather != null) SkyIcon(weather.sky, weather.isDay, 13)
-                    Text(after, style = line)
-                }
+            item(key = "apps", contentType = "apps") { apps() }
+            rows.filter { it.key != FIRST_ROW && it.key != "apps" && it.key != "cards" }.forEach { r ->
+                item(key = r.key, contentType = "row") { RowBlock(r, onOpen, onFocus, reset, Modifier.onFocusChanged { place.focus(r.key, it.hasFocus) }) }
             }
         }
     }
 }
 
-/** "61° and partly cloudy, 47° tonight": the weather as one line. */
-internal fun weatherLine(w: app.marquee.tv.weather.Weather, hour: Int): String {
-    val now = "${w.temp}° and ${w.summary.lowercase()}"
-    return if (hour in 5..17) "$now, ${w.low}° tonight" else "$now, low ${w.low}°"
+/** Clock, greeting and date: the only part of the Dashboard that changes on the minute, so only it recomposes. */
+@Composable
+private fun DashboardClock(profileName: String, summary: String?) {
+    val now = rememberNow()
+    Text(clockText(now), style = T.serif(52.sp))
+    Column(Modifier.padding(start = 14.dp)) {
+        Text(greeting(now, profileName), style = T.sans(14.sp, FontWeight.SemiBold))
+        Text(dateText(now) + (summary?.let { " · ${it.lowercase()}" } ?: ""), style = T.sans(10.sp, color = C.Cool))
+    }
 }
 
 /** The Dashboard backdrop: the live weather sky (default), or a real photo of your area. */
 @Composable
 private fun DashboardBackground(mode: String, weather: app.marquee.tv.weather.Weather?, photo: app.marquee.tv.photos.AreaPhoto?) {
-    // The sky is left clear down to the shelf, then darkens under it.
-    val fade = remember { Brush.verticalGradient(0.41f to Color(0x00040610), 0.56f to Color(0xAD040610), 1f to Color(0xF2040610)) }
+    val fade = remember { Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)) }
     if (mode == "PHOTO" && photo != null && app.marquee.tv.system.PerfCheck.liteLevel == 0) BakedBackdrop(photo.url, remember { listOf(fade) })
     else WeatherBackdrop(weather, overlay = fade, grain = true)
-    // A soft shade behind the clock and the news, so they read against a bright sky.
-    val dens = androidx.compose.ui.platform.LocalDensity.current
-    val shade = remember(dens) {
-        with(dens) { Brush.radialGradient(listOf(Color(0x8C040610), Color(0x00040610)), center = androidx.compose.ui.geometry.Offset(150.dp.toPx(), 120.dp.toPx()), radius = 440.dp.toPx()) }
+}
+
+@Composable
+fun ResumeCard(t: Title, modifier: Modifier, onClick: () -> Unit) {
+    Focusable(modifier, onClick = onClick) { f ->
+        Row(
+            Modifier.fillMaxSize().glass(stroke = if (f) C.Text else C.Stroke).padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.fillMaxHeight().width(150.dp).clip(RoundedCornerShape(9.dp)).background(Color(0x33000000))) {
+                AsyncImage(t.backdropUrl ?: t.posterUrl, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                t.progress?.let { p ->
+                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0x40FFFFFF))) {
+                        Box(Modifier.fillMaxWidth(p).height(3.dp).background(C.Amber))
+                    }
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("CONTINUE WATCHING", style = T.label)
+                Text(t.title, style = T.sans(13.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                t.badge?.let { Text(it, style = T.sans(10.sp, color = C.TextDim)) }
+                Text(if (f) "Press OK to resume" else "", style = T.sans(9.sp, FontWeight.Bold, C.AmberSoft))
+            }
+        }
     }
-    Box(Modifier.size(600.dp, 400.dp).background(shade))
+}
+
+@Composable
+fun RowBlock(r: DataRow, onOpen: (Title) -> Unit, onFocus: (Title) -> Unit = {}, resetKey: Any? = null, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        SectionHeader(r.title, r.subtitle, Modifier.padding(start = 48.dp, top = 4.dp))
+        val yt = r.key == "youtube"
+        MediaRow(
+            r.items, if (yt) 190.dp else 170.dp, if (yt) 107.dp else 96.dp,
+            onFocus = onFocus, onClick = onOpen, resetKey = resetKey,
+        )
+    }
 }
 
 @Composable
@@ -351,13 +371,45 @@ private fun EmptyState(loading: Boolean, needsSetup: Boolean, nav: Nav) {
     }
 }
 
+@Composable
+fun WeatherCard(w: app.marquee.tv.weather.Weather?, city: String, hasLocation: Boolean, modifier: Modifier) {
+    val shade = remember { Brush.verticalGradient(listOf(Color(0x40000000), Color(0x8C000000))) }
+    Box(modifier.glass()) {
+        // The card's background is the live weather itself: sun and sky colour, drifting cloud, rain or snow.
+        if (w != null) app.marquee.tv.ui.components.LiveSky(
+            w.sky, w.isDay, Modifier.matchParentSize(), windKph = w.windKph, sunrise = w.sunrise, sunset = w.sunset,
+            overlay = shade, landscape = false, animate = false, orbs = false,
+        )
+    Column(Modifier.matchParentSize().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(city.uppercase().ifBlank { "WEATHER" }, style = T.label)
+                if (w != null) Row(verticalAlignment = Alignment.Bottom) {
+                    Text("${w.temp}°", style = T.serif(40.sp))
+                    Text("  ${w.summary} · H ${w.high}° L ${w.low}°", style = T.sans(10.sp, color = C.Text), modifier = Modifier.padding(bottom = 7.dp))
+                } else Text(if (hasLocation) "Loading…" else "Add your city in Settings", style = T.body, modifier = Modifier.padding(top = 8.dp))
+            }
+            SkyIcon(w?.sky, w?.isDay ?: (java.time.LocalTime.now().hour in 7..18), 26)
+        }
+        if (w != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            w.hourly.forEach { h ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(h.label, style = T.sans(8.sp, color = C.Cool))
+                    Text("${h.temp}°", style = T.sans(10.sp, FontWeight.SemiBold))
+                }
+            }
+        }
+    }
+    }
+}
 
 /**
- * The news, up front: one story at a time with its picture, changing every 12 seconds through the first story of
- * each category and then the second of each. OK opens the News screen with that story on top.
+ * News on the Dashboard: one story at a time with its picture, moving on every 12 seconds through the lead
+ * stories of each category. OK opens the News screen with that story up top.
  */
 @Composable
-internal fun NewsLead(sections: List<app.marquee.tv.news.NewsSection>, needsCity: Boolean, modifier: Modifier = Modifier, onOpen: (app.marquee.tv.news.Story?) -> Unit) {
+fun NewsCard(sections: List<app.marquee.tv.news.NewsSection>, needsCity: Boolean, modifier: Modifier, onOpen: (app.marquee.tv.news.Story?) -> Unit) {
+    // The first story of each category in turn, then the second of each.
     val leads = remember(sections) {
         (0 until 2).flatMap { i -> sections.mapNotNull { sec -> sec.stories.getOrNull(i)?.let { sec to it } } }
     }
@@ -366,38 +418,29 @@ internal fun NewsLead(sections: List<app.marquee.tv.news.NewsSection>, needsCity
     }
     val current = leads.getOrNull(index % leads.size.coerceAtLeast(1))
     Focusable(modifier, onClick = { onOpen(current?.second) }) { f ->
-        Row(Modifier.height(108.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            val shape = RoundedCornerShape(11.dp)
-            Box(
-                Modifier.size(192.dp, 108.dp)
-                    .then(if (f) Modifier.shadow(18.dp, shape, ambientColor = C.Amber, spotColor = C.Amber) else Modifier)
-                    .clip(shape).background(remember(current?.second?.link) { app.marquee.tv.ui.components.fallbackBrush(current?.second?.link ?: "news") })
-                    .border(if (f) 2.dp else 1.dp, if (f) Color(0xF2FFF0DC) else Color(0x24FFFFFF), shape),
-            ) {
-                current?.second?.image?.let { AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+        Row(
+            Modifier.fillMaxSize().glass(stroke = if (f) C.Text else C.Stroke).padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (current == null) {
+                Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("NEWS", style = T.label)
+                    Text("Getting the headlines…", style = T.sans(13.sp, FontWeight.Bold))
+                    if (needsCity) Text("Add your city in Settings for local and state news", style = T.small)
+                }
+                return@Row
             }
-            Column(Modifier.width(310.dp).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
-                if (current == null) {
-                    Text("NEWS", style = T.sans(9.sp, FontWeight.ExtraBold, C.Amber, 1.25.sp).copy(shadow = HeaderShadow))
-                    Text("Getting the headlines…", style = T.serif(23.sp).copy(lineHeight = 25.sp, shadow = HeaderShadow))
-                    Text(if (needsCity) "Add your city in Settings for local and state news" else "", style = T.sans(10.sp, FontWeight.Medium, Color(0xFFD5DAE8)).copy(shadow = HeaderShadow))
-                    return@Column
-                }
-                val (sec, story) = current
-                Text(sec.title.uppercase(), style = T.sans(9.sp, FontWeight.ExtraBold, C.Amber, 1.25.sp).copy(shadow = HeaderShadow), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(story.title, style = T.serif(23.sp).copy(lineHeight = 25.sp, shadow = HeaderShadow), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        if (f) "Press OK for the news" else listOf(story.source, app.marquee.tv.news.NewsFeeds.ago(story.published)).filter { it.isNotBlank() }.joinToString(" · "),
-                        style = T.sans(10.sp, if (f) FontWeight.Bold else FontWeight.Medium, if (f) C.AmberSoft else Color(0xFFD5DAE8)).copy(shadow = HeaderShadow),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                    )
-                    // Where this story is among the ones it turns through.
-                    val n = leads.size.coerceAtMost(6)
-                    if (n > 1) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        repeat(n) { i -> Box(Modifier.size(if (i == index % n) 17.dp else 6.dp, 2.5.dp).clip(CircleShape).background(if (i == index % n) C.Amber else Color(0x80FFFFFF))) }
-                    }
-                }
+            val (sec, story) = current
+            Box(Modifier.fillMaxHeight().width(108.dp).clip(RoundedCornerShape(9.dp)).background(Color(0x33000000))) {
+                if (story.image != null) AsyncImage(story.image, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            }
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                Text(sec.title.uppercase(), style = T.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(story.title, style = T.sans(11.sp, FontWeight.Bold).copy(lineHeight = 14.sp), maxLines = 5, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (f) "Press OK for the news" else listOf(story.source, app.marquee.tv.news.NewsFeeds.ago(story.published)).filter { it.isNotBlank() }.joinToString(" · "),
+                    style = T.sans(8.sp, if (f) FontWeight.Bold else FontWeight.Normal, if (f) C.AmberSoft else C.Cool), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

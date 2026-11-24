@@ -31,7 +31,6 @@ import app.marquee.tv.data.Title
 import app.marquee.tv.recs.FeedLayout
 import app.marquee.tv.recs.HomeData
 import app.marquee.tv.ui.home.DashboardPage
-import app.marquee.tv.ui.home.ShelfTile
 import app.marquee.tv.ui.home.rememberHomeListState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import org.junit.Assert.assertEquals
@@ -47,11 +46,10 @@ import org.robolectric.annotation.Config
 
 /**
  * The Dashboard's real page on a simulated 1080p Android TV: remote buttons are pressed and new picks arrive, and
- * each test checks which tile is highlighted and which row is at the top of the shelf.
+ * each test checks which card is highlighted and whether the top of the page is still in view.
  *
- * The page shows two rows: the one you are on and the one after it. Down and Up change which row that is. These
- * also guard against the two ways focus used to go astray: Compose scrolling whatever takes focus a third of the
- * way down the screen, and focus being handed to the nearest thing when the highlighted tile disappears.
+ * On a TV, Compose scrolls whatever takes focus to about a third of the way down the screen. That, and focus being
+ * handed to the nearest thing when the highlighted card disappears, is what these guard against.
  */
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -74,7 +72,7 @@ class HomeFocusTest {
     private fun cards(prefix: String, n: Int = 8) = Array(n) { "$prefix${it + 1}" }
     private fun home(vararg rows: DataRow) = HomeData(null, rows.toList(), emptyList())
 
-    /** "For you" (a1…a8) and six more rows (b…g), eight tiles each. On the shelf the apps come second. */
+    /** "For you" (a1…a8) and six more rows (b…g), eight cards each. */
     private val first = home(
         row(FeedLayout.FOR_YOU, *cards("a")), row("svc:8:new", *cards("b")), row("mood:comedy", *cards("c")),
         row("plex", *cards("d")), row("trending", *cards("e")), row("toprated", *cards("f")), row("mood:thriller", *cards("g")),
@@ -82,21 +80,20 @@ class HomeFocusTest {
 
     private var data by mutableStateOf<HomeData?>(null)
     private val homeButton = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    private lateinit var shelf: LazyListState
+    private lateinit var page: LazyListState
 
     private fun show(start: HomeData?) {
         data = start
         compose.mainClock.autoAdvance = false
         compose.setContent {
-            // Stand-ins for the clock, the buttons, the news and the apps; the rows of titles are the real ones.
+            // Stand-ins for the top bar, the cards and the apps, the same heights as the real ones.
             DashboardPage(
                 data, homeButton, onOpen = {},
-                header = { Text("7:42") },
-                actions = { Row { Button("Search", 34, 34); Button("Settings", 34, 34) } },
-                news = { Button("News", 520, 108) },
-                apps = { form, _ -> Row(Modifier.padding(start = 48.dp)) { ShelfTile(form, onClick = {}) { Text("Netflix") }; ShelfTile(form, onClick = {}) { Text("Plex") } } },
+                topBar = { Button("Pick together", 120, 62); Button("Search", 60, 62) },
+                cards = { Row(Modifier.padding(horizontal = 48.dp)) { Button("Weather", 240, 128); Button("News", 500, 128) } },
+                apps = { Row(Modifier.padding(horizontal = 48.dp)) { Button("Netflix", 150, 96); Button("Plex", 150, 96) } },
                 empty = { Text("Finding tonight's picks") },
-                listState = rememberHomeListState().also { shelf = it },
+                listState = rememberHomeListState().also { page = it },
             )
         }
         settle()
@@ -107,149 +104,92 @@ class HomeFocusTest {
 
     /** Lets a change reach the screen, then runs the clock (the page waits a moment before it takes focus or settles). */
     private fun settle(ms: Long = 1500) { compose.waitForIdle(); compose.mainClock.advanceTimeBy(ms); compose.waitForIdle() }
-    private fun press(key: Key, times: Int = 1, pause: Long = 600) = repeat(times) { compose.onRoot().performKeyInput { pressKey(key) }; settle(pause) }
+    private fun press(key: Key, times: Int = 1) = repeat(times) { compose.onRoot().performKeyInput { pressKey(key) }; settle(600) }
 
     private fun focused(): String = compose.onAllNodes(isFocused()).fetchSemanticsNodes().joinToString("|") { n ->
         n.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.Text) { null }?.firstOrNull()?.text ?: "?"
     }
     private fun assertOn(label: String) = assertEquals("the highlight", label, focused())
-    /** The row in focus sits exactly at the top of the shelf: [row] counts from 0 ("For you"), with the apps second. */
-    private fun assertRow(row: Int) = assertEquals("the row at the top of the shelf", row to 0, compose.runOnIdle { shelf.firstVisibleItemIndex to shelf.firstVisibleItemScrollOffset })
+    private fun assertAtTop() = assertEquals("the page is at the very top", 0 to 0, compose.runOnIdle { page.firstVisibleItemIndex to page.firstVisibleItemScrollOffset })
 
-    @Test fun opensOnTheFirstTile() {
+    @Test fun opensAtTheTopOnTheFirstCard() {
         show(first)
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
     }
 
-    @Test fun picksArrivingAfterAnEmptyStartOpenOnTheFirstTile() {
+    @Test fun picksArrivingAfterAnEmptyStartStillOpenAtTheTop() {
         show(null)
         data = first; settle()
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
     }
 
-    @Test fun movingAlongARowMovesNothingElse() {
+    @Test fun movingAlongTheFirstRowKeepsTheTopInView() {
         show(first)
         press(Key.DirectionRight, 3)
-        assertOn("Title a4"); assertRow(0)
+        assertOn("Title a4"); assertAtTop()
     }
 
-    /** Where a tile is across the screen: its left edge, in dp. */
-    private fun leftOf(title: String) = compose.onAllNodes(androidx.compose.ui.test.hasText(title)).fetchSemanticsNodes().single().boundsInRoot.left / 2f
-
-    @Test fun theTileInFocusAlwaysSitsAtTheMargin() {
-        show(home(row(FeedLayout.FOR_YOU, *cards("a", 5)), *first.rows.drop(1).toTypedArray())) // a short row: its end is close
-        assertEquals(48f, leftOf("Title a1"), 0.5f)
-        press(Key.DirectionRight, 2)
-        assertOn("Title a3"); assertEquals(48f, leftOf("Title a3"), 0.5f)
-        press(Key.DirectionUp)   // to the news: the tile shrinks where it is
-        assertEquals(48f, leftOf("Title a3"), 0.5f)
-        press(Key.DirectionDown, 3); press(Key.DirectionUp, 2) // away down the rows and back
-        assertOn("Title a3"); assertEquals(48f, leftOf("Title a3"), 0.5f)
-        press(Key.DirectionRight, 2)                           // the last tile in the row
-        assertOn("Title a5"); assertEquals(48f, leftOf("Title a5"), 0.5f)
-    }
-
-    @Test fun downAndUpChangeTheRowYouAreOn() {
+    @Test fun downTheRowsAndBackUpEndsAtTheTop() {
         show(first)
-        press(Key.DirectionDown)
-        assertOn("Netflix"); assertRow(1)
+        press(Key.DirectionDown) // the apps
+        assertOn("Netflix")
         press(Key.DirectionDown, 2)
-        assertOn("Title c1"); assertRow(3)
-        press(Key.DirectionRight, 2); press(Key.DirectionUp); press(Key.DirectionDown)
-        assertOn("Title c3"); assertRow(3) // back on the tile you left
+        assertOn("Title c1")
+        assertTrue("further down, the page has moved", compose.runOnIdle { page.firstVisibleItemIndex } > 0)
         press(Key.DirectionUp, 3)
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
     }
 
-    @Test fun holdingDownGoesStraightThroughTheRows() {
+    @Test fun newPicksKeepYouOnTheFirstCard() {
         show(first)
-        press(Key.DirectionDown, 7, pause = 48) // faster than the shelf can follow
-        settle()
-        assertOn("Title g1"); assertRow(7)
-        press(Key.DirectionDown) // the last row: nothing below it
-        assertOn("Title g1"); assertRow(7)
-        press(Key.DirectionUp, 7, pause = 48)
-        settle()
-        assertOn("Title a1"); assertRow(0)
-    }
-
-    @Test fun upFromTheFirstRowReachesTheNewsAndTheButtons() {
-        show(first)
-        press(Key.DirectionRight); press(Key.DirectionUp)
-        assertOn("News"); assertRow(0)
-        press(Key.DirectionUp)
-        assertTrue("a button at the top right, not ${focused()}", focused() in setOf("Search", "Settings"))
-        press(Key.DirectionDown)
-        assertOn("News")
-        press(Key.DirectionDown)
-        assertOn("Title a2"); assertRow(0)
-    }
-
-    @Test fun continueWatchingComesBeforeTheApps() {
-        show(home(first.rows[0], row(FeedLayout.CONTINUE, *cards("k", 3)), *first.rows.drop(1).toTypedArray()))
-        press(Key.DirectionDown)
-        assertOn("Title k1"); assertRow(1)
-        press(Key.DirectionDown)
-        assertOn("Netflix"); assertRow(2)
-    }
-
-    @Test fun newPicksKeepYouOnTheFirstTile() {
-        show(first)
-        // The tile that was first has gone altogether.
+        // The card that was first has gone altogether.
         data = home(row(FeedLayout.FOR_YOU, *cards("x")), *first.rows.drop(1).toTypedArray()); settle()
-        assertOn("Title x1"); assertRow(0)
-        // The tile that was first is now third.
+        assertOn("Title x1"); assertAtTop()
+        // The card that was first is now third.
         data = home(row(FeedLayout.FOR_YOU, "x3", "x2", "x1", "x4", "x5", "x6"), *first.rows.drop(1).toTypedArray()); settle()
-        assertOn("Title x3"); assertRow(0)
+        assertOn("Title x3"); assertAtTop()
     }
 
-    @Test fun newPicksLeaveYouOnATileThatIsStillThere() {
+    @Test fun newPicksLeaveYouOnACardThatIsStillThere() {
         show(first)
         press(Key.DirectionDown, 3); press(Key.DirectionRight)
-        assertOn("Title c2"); assertRow(3)
-        // Its row is now one further down, and the tile second in it.
-        data = home(row(FeedLayout.FOR_YOU, *cards("x")), first.rows[1], first.rows[3], row("mood:comedy", "c9", "c2", "c1", "c3"), *first.rows.drop(4).toTypedArray()); settle()
-        assertOn("Title c2"); assertRow(4)
+        assertOn("Title c2")
+        val before = compose.runOnIdle { page.firstVisibleItemIndex to page.firstVisibleItemScrollOffset }
+        data = home(row(FeedLayout.FOR_YOU, *cards("x")), first.rows[1], row("mood:comedy", "c9", "c2", "c1", "c3"), *first.rows.drop(3).toTypedArray()); settle()
+        assertOn("Title c2")
+        assertEquals("and the page hasn't moved", before, compose.runOnIdle { page.firstVisibleItemIndex to page.firstVisibleItemScrollOffset })
     }
 
-    @Test fun newPicksWithoutYourTileTakeYouBackToTheTop() {
+    @Test fun newPicksWithoutYourCardTakeYouBackToTheTop() {
         show(first)
         press(Key.DirectionDown, 3)
         assertOn("Title c1")
-        // Its tile has gone from the row…
+        // Its card has gone from the row…
         data = home(first.rows[0], first.rows[1], row("mood:comedy", "c5", "c6", "c7", "c8"), *first.rows.drop(3).toTypedArray()); settle()
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
         // …or the whole row has.
         press(Key.DirectionDown, 3)
         assertOn("Title c5")
         data = home(first.rows[0], first.rows[1], *first.rows.drop(3).toTypedArray()); settle()
-        assertOn("Title a1"); assertRow(0)
-    }
-
-    @Test fun newPicksLeaveYouOnTheApps() {
-        show(first)
-        press(Key.DirectionDown); press(Key.DirectionRight)
-        assertOn("Plex"); assertRow(1)
-        data = home(row(FeedLayout.FOR_YOU, *cards("x")), *first.rows.drop(2).toTypedArray()); settle()
-        assertOn("Plex"); assertRow(1)
+        assertOn("Title a1"); assertAtTop()
     }
 
     @Test fun homeGoesBackToTheTop() {
         show(first)
         press(Key.DirectionDown, 4); press(Key.DirectionRight, 2)
-        assertOn("Title d3"); assertRow(4)
+        assertOn("Title d3")
         homeButton.tryEmit(Unit); settle()
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
     }
 
     @Test fun aRowComingBackIntoViewNeverTakesTheHighlight() {
         show(first)
         homeButton.tryEmit(Unit); settle() // one reset, as after any press of Home
-        press(Key.DirectionDown, 7)        // far enough that "For you" is no longer kept built
+        press(Key.DirectionDown, 7)      // far enough that "For you" is no longer kept built
         assertOn("Title g1")
-        press(Key.DirectionUp, 3)          // …and back up towards it
-        assertOn("Title d1"); assertRow(4)
+        press(Key.DirectionUp, 3)        // …and back up towards it
+        assertOn("Title d1")
         press(Key.DirectionUp, 4)
-        assertOn("Title a1"); assertRow(0)
+        assertOn("Title a1"); assertAtTop()
     }
 }

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import app.marquee.tv.ui.components.glass
 import kotlinx.coroutines.launch
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.key
@@ -180,12 +179,13 @@ fun orderedApps(all: List<TvApp>, s: Settings, preferredYouTube: String?, plexPl
     return placed + auto.filter { it !in placed }
 }
 
-/** Hold OK (about half a second) for the long-press menu; a normal press still opens the app. */
 @Composable
-private fun holdOk(onLongClick: (() -> Unit)?): Modifier {
+fun AppTile(app: TvApp, width: Int = 104, moving: Boolean = false, onLongClick: (() -> Unit)? = null, onFocus: (Boolean) -> Unit = {}, onClick: () -> Unit) {
+    val bmp = remember(app.packageName) { runCatching { (app.banner ?: app.icon)?.toBitmap(320, 180)?.asImageBitmap() }.getOrNull() }
+    // Hold OK (about half a second) for the long-press menu; a normal press still opens the app.
     var downAt by remember { mutableStateOf(0L) }
     var longFired by remember { mutableStateOf(false) }
-    return Modifier.onPreviewKeyEvent { e ->
+    val longPress = Modifier.onPreviewKeyEvent { e ->
         val k = e.nativeKeyEvent
         val ok = k.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || k.keyCode == android.view.KeyEvent.KEYCODE_ENTER
         if (!ok || onLongClick == null) return@onPreviewKeyEvent false
@@ -198,42 +198,6 @@ private fun holdOk(onLongClick: (() -> Unit)?): Modifier {
             else -> false
         }
     }
-}
-
-/** An app on the Dashboard's shelf: sized like the titles there, growing when it's the tile in focus. */
-@Composable
-private fun ShelfAppTile(app: TvApp, rowT: () -> Float, moving: Boolean, onLongClick: (() -> Unit)?, onFocus: (Boolean) -> Unit, onClick: () -> Unit) {
-    val bmp = remember(app.packageName) { runCatching { (app.banner ?: app.icon)?.toBitmap(320, 180)?.asImageBitmap() }.getOrNull() }
-    ShelfTile(rowT, holdOk(onLongClick), lifted = moving, onFocus = onFocus, onClick = onClick) {
-        val shape = RoundedCornerShape(8.dp)
-        Box(Modifier.fillMaxSize().clip(shape).background(Color(0x24FFFFFF)).border(1.dp, C.Stroke, shape), contentAlignment = Alignment.Center) {
-            if (bmp != null && app.banner != null) Image(bmp, app.label, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            else Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (bmp != null) Image(bmp, null, Modifier.size(24.dp))
-                Text(app.label, style = T.sans(10.sp, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 6.dp))
-            }
-            if (moving) Row(Modifier.fillMaxSize().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("◀", style = T.sans(13.sp, FontWeight.ExtraBold, C.Amber)); Text("▶", style = T.sans(13.sp, FontWeight.ExtraBold, C.Amber))
-            }
-        }
-    }
-}
-
-/** "All apps" and "TV settings", at the end of the apps on the shelf. */
-@Composable
-private fun ShelfWordTile(label: String, rowT: () -> Float, onClick: () -> Unit) {
-    ShelfTile(rowT, onClick = onClick) { f ->
-        val shape = RoundedCornerShape(8.dp)
-        Box(Modifier.fillMaxSize().clip(shape).background(if (f) C.Text else Color(0x24FFFFFF)).border(1.dp, C.Stroke, shape), contentAlignment = Alignment.Center) {
-            Text(label, style = T.sans(11.sp, FontWeight.Bold, if (f) Color(0xFF120D08) else C.Text), maxLines = 1)
-        }
-    }
-}
-
-@Composable
-fun AppTile(app: TvApp, width: Int = 104, moving: Boolean = false, onLongClick: (() -> Unit)? = null, onFocus: (Boolean) -> Unit = {}, onClick: () -> Unit) {
-    val bmp = remember(app.packageName) { runCatching { (app.banner ?: app.icon)?.toBitmap(320, 180)?.asImageBitmap() }.getOrNull() }
-    val longPress = holdOk(onLongClick)
     Focusable(longPress, onClick = onClick, onFocus = onFocus) { f ->
         val scale = if (moving) 1.12f else if (f) 1.08f else 1f
         Box(
@@ -270,16 +234,9 @@ private fun RowTile(label: String, onClick: () -> Unit) {
 /**
  * The apps ribbon. Hold OK on an app to move it or hide it: in Move, Left/Right slides it along the row
  * and OK (or Back) puts it down. Your order is remembered; hidden apps stay in All apps.
- *
- * On the Dashboard's shelf ([shelf]: where the row is between "next" and "in focus") the tiles are sized like the
- * titles there, and the hint ("Hold OK to move…") is handed to [onHint] to show, as the shelf has no line under a row.
  */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun AppsRow(
-    apps: List<TvApp>, onOpen: (TvApp) -> Unit, onAll: () -> Unit, vm: app.marquee.tv.ui.MarqueeVm? = null,
-    shelf: (() -> Float)? = null, onHint: ((text: String, strong: Boolean) -> Unit)? = null,
-) {
+fun AppsRow(apps: List<TvApp>, onOpen: (TvApp) -> Unit, onAll: () -> Unit, vm: app.marquee.tv.ui.MarqueeVm? = null) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val shown = apps.take(12)
     var menuFor by remember { mutableStateOf<TvApp?>(null) }
@@ -290,48 +247,25 @@ fun AppsRow(
     val packages = shown.map { it.packageName }
     androidx.activity.compose.BackHandler(enabled = moving != null) { moving = null }
 
-    // While an app is being moved, Left and Right carry it along the row; OK, Up or Down puts it down.
-    val carry = Modifier.onPreviewKeyEvent { e ->
-        val pkg = moving ?: return@onPreviewKeyEvent false
-        if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent e.key == Key.DirectionLeft || e.key == Key.DirectionRight || e.key == Key.DirectionCenter || e.key == Key.Enter
-        when (e.key) {
-            Key.DirectionLeft, Key.DirectionRight -> {
-                val d = if (e.key == Key.DirectionLeft) -1 else 1
-                vm?.moveApp(packages, pkg, d)
-                val idx = (packages.indexOf(pkg) + d).coerceIn(0, packages.lastIndex)
-                scope.launch { rowState.animateScrollToItem((idx - 1).coerceAtLeast(0)) }
-                true
-            }
-            Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown -> { moving = null; e.key == Key.DirectionCenter || e.key == Key.Enter }
-            else -> false
-        }
-    }
-    val hint = when {
-        moving != null -> "Moving ${shown.firstOrNull { it.packageName == moving }?.label ?: ""} · ◀ ▶ to move · OK when done"
-        appFocused && vm != null -> "Hold OK to move or hide an app"
-        else -> ""
-    }
-    val openSettings = { (ctx.applicationContext as app.marquee.tv.MarqueeApp).apps.openSystemSettings() }
-    if (shelf != null) {
-        if (onHint != null) LaunchedEffect(hint) { onHint(hint, moving != null) }
-        app.marquee.tv.ui.components.PinnedRow(ShelfSize.start) {
-            LazyRow(
-                state = rowState, horizontalArrangement = Arrangement.spacedBy(ShelfSize.gap), contentPadding = ShelfSize.rowPadding(),
-                modifier = Modifier.height(ShelfSize.strip).focusRestorer().then(carry),
-            ) {
-                items(shown.size, key = { shown[it].packageName }) { i ->
-                    val a = shown[i]
-                    ShelfAppTile(a, shelf, moving == a.packageName, if (vm != null) ({ menuFor = a }) else null, { appFocused = it }) { if (moving == null) onOpen(a) }
-                }
-                item(key = "all") { ShelfWordTile("All apps", shelf, onAll) }
-                item(key = "tvsettings") { ShelfWordTile("TV settings", shelf, openSettings) }
-            }
-        }
-    } else Column {
+    Column {
         LazyRow(
             state = rowState,
             horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 48.dp, vertical = 10.dp),
-            modifier = carry,
+            modifier = Modifier.onPreviewKeyEvent { e ->
+                val pkg = moving ?: return@onPreviewKeyEvent false
+                if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent e.key == Key.DirectionLeft || e.key == Key.DirectionRight || e.key == Key.DirectionCenter || e.key == Key.Enter
+                when (e.key) {
+                    Key.DirectionLeft, Key.DirectionRight -> {
+                        val d = if (e.key == Key.DirectionLeft) -1 else 1
+                        vm?.moveApp(packages, pkg, d)
+                        val idx = (packages.indexOf(pkg) + d).coerceIn(0, packages.lastIndex)
+                        scope.launch { rowState.animateScrollToItem((idx - 1).coerceAtLeast(0)) }
+                        true
+                    }
+                    Key.DirectionCenter, Key.Enter, Key.DirectionUp, Key.DirectionDown -> { moving = null; e.key == Key.DirectionCenter || e.key == Key.Enter }
+                    else -> false
+                }
+            },
         ) {
             items(shown.size, key = { shown[it].packageName }) { i ->
                 val a = shown[i]
@@ -340,7 +274,12 @@ fun AppsRow(
                 }
             }
             item(key = "all") { RowTile("All apps", onAll) }
-            item(key = "tvsettings") { RowTile("TV settings", openSettings) }
+            item(key = "tvsettings") { RowTile("TV settings") { (ctx.applicationContext as app.marquee.tv.MarqueeApp).apps.openSystemSettings() } }
+        }
+        val hint = when {
+            moving != null -> "Moving ${shown.firstOrNull { it.packageName == moving }?.label ?: ""} · ◀ ▶ to move · OK when done"
+            appFocused && vm != null -> "Hold OK to move or hide an app"
+            else -> ""
         }
         Text(hint, style = T.sans(9.sp, FontWeight.SemiBold, if (moving != null) C.AmberSoft else C.TextMute), modifier = Modifier.padding(start = 48.dp).height(14.dp))
     }

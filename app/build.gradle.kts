@@ -17,8 +17,8 @@ android {
         buildConfigField("String", "UPDATE_TOKEN", "\"${System.getenv("MARQUEE_UPDATE_TOKEN") ?: ""}\"")
         minSdk = 31
         targetSdk = 35
-        versionCode = 44
-        versionName = "0.21.0"
+        versionCode = 45
+        versionName = "0.21.1"
     }
 
     signingConfigs {
@@ -87,6 +87,12 @@ dependencies {
 
 // Release builds (the GitHub workflow) pass -Pmarquee.skipScreenshots: the screenshot tests render whole screens in a
 // simulated Android display, which is slow and doesn't gate a release; the logic tests still run.
+// HomePreview makes pictures of the home screen for looking at; it is not a test. It only runs when asked for
+// (MARQUEE_PREVIEW=<folder>), and is otherwise never even loaded.
+if (System.getenv("MARQUEE_PREVIEW").isNullOrBlank()) {
+    tasks.withType<Test>().configureEach { filter { excludeTestsMatching("*HomePreview*") } }
+}
+
 if (project.hasProperty("marquee.skipScreenshots")) {
     tasks.withType<Test>().configureEach { filter { excludeTestsMatching("*ScreenshotTest*") } }
 }
