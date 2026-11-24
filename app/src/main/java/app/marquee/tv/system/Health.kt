@@ -56,20 +56,6 @@ object HealthChecks {
                 }
             },
             async {
-                probe("calendar", "Calendar", s.calendarUrls.isNotEmpty(), "Add your iCal link on the phone page", "${s.calendarUrls.size} calendar${if (s.calendarUrls.size > 1) "s" else ""} readable") {
-                    s.calendarUrls.forEach { u ->
-                        val body = Http.getText(u.replace("webcal://", "https://"))
-                        if (!body.contains("BEGIN:VCALENDAR")) throw IllegalStateException("That link isn't a calendar file")
-                    }
-                }
-            },
-            async {
-                probe("routes", "Live traffic", s.routesKey.isNotBlank() && s.homeAddress.isNotBlank(),
-                    if (s.routesKey.isBlank()) "Add a Google Routes key" else "Add your home address", "Working") {
-                    app.traffic.drive(s.homeAddress, maxAgeMinutes = 0) ?: throw IllegalStateException("Google didn't return a route. Is the Routes API enabled for this key?")
-                }
-            },
-            async {
                 val ytChannels = YouTubeInterests.channelsFor(s)
                 probe("youtube", "YouTube", (app.youtube.configured && app.youtube.signedIn) || ytChannels.isNotEmpty(),
                     "Pick YouTube interests in Settings, or add channels on the phone page",

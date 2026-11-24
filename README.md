@@ -4,7 +4,8 @@ Marquee replaces the Google TV home screen with one built around what you alread
 
 - **No ads, no sponsored rows, no rentals or purchases.** Every pick is on your Plex, included in a subscription you have, or genuinely free. Ad-supported tiers are never recommended.
 - **News, read on the TV:** headlines by category (Local, State, National, Politics, Tech and Business), each with its picture. Local comes from the nearest CBS newsroom plus a news search for your city, State from a search for your state, the rest from CBS, NBC, PBS NewsHour, the BBC, Ars Technica and TechCrunch. Marquee opens every story in the background first and only lists the ones that read properly, so each one opens in full on the TV, with its photos. Marquee always identifies itself to news sites and never works around one that turns it away; those stories are simply left out.
-- **Three home styles:** Dashboard (weather, calendar and news headlines), Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock, what's next). It can switch automatically by time of day.
+- **A home screen that leaves the sky open:** the Dashboard keeps the clock, the weather on one line and the lead news story (with its picture) at the top left, and only ever shows two rows of tiles: the row you are on, and the one after it, smaller and dimmer. One line names every row and marks the two in view; Down moves both up by one, and nothing above them moves. The tile you are on grows and carries its own details.
+- **Three home styles:** Dashboard, Cinematic (full-screen title with ad-free trailer previews), and Ambient (artwork, big clock). It can switch automatically by time of day.
 - **A sky with something alive in it:** the sky behind everything follows your real weather, sun and moon. Every minute or two something crosses it and is gone, drawn as itself rather than as a shadow: a cardinal, a blue jay, a robin, goldfinches or chickadees (whichever the season brings), a flock of sparrows, crows, Canada geese in a V, a red-tailed hawk circling, a squirrel out along a branch that dips into view under its weight; starlings and bats around sunset; a barn owl, and bats picked out pale against the night, after dark. Each is lit by the hour, and what turns up depends on the season and the weather (butterflies only in the warm months, nothing in a storm). Settings → Weather → *Birds and wildlife* turns it off.
 - **Your choice of screensaver:** Google TV's own (Google Photos, art…) or Marquee Ambient, for both idle time and Back on the home screen. Settings shows which one Android will actually run and puts it right if it's out of step. Home closes either one and takes you back to Marquee.
 - **A feed built around your services, with the best of your Plex:**
@@ -13,10 +14,9 @@ Marquee replaces the Google TV home screen with one built around what you alread
   - **"Because you watched…"** takes something you finished on Plex and finds similar titles on Netflix, Hulu and your other services.
   - **Mood and genre rows** ("Easy comedies", "Gripping thrillers", "Under 90 minutes"…) mix all your services; Plex fills gaps instead of leading.
   - **Plex gets two rows:** Continue watching, and one rotating **From your Plex** row (Plex's own hubs, a collection spotlight and recently added, merged), which favours new and unwatched titles.
-  - **Feed balance** (Settings → Your services, or the phone setup page): More Plex, Balanced or More services. It applies to the rows and to Pick Together.
+  - **Feed balance** (Settings → Your services, or the phone setup page): More Plex, Balanced or More services.
   - **Your own row order** (Settings → Home rows): move row groups earlier or later, or hide them. "For you" always comes first; "Back to Marquee's mix" restores the default.
 - **Play opens the title itself** in Netflix, Max, Disney+ and your other apps when you add a free Watchmode key. Without one, Marquee opens the app and tells you what to search for.
-- **Calendar with leave-now alerts:** reads your Google Calendar's private iCal link, checks live traffic, and shows a "time to leave" card over whatever is playing, with a QR code for directions on your phone.
 - **TizenTube (or SmartTube) instead of YouTube:** your preferred YouTube app replaces YouTube everywhere, including the remote's YouTube button. "New from your subscriptions" opens there.
 - **Ribbons that change over time:**
   - **Seasonal and holiday ribbons:** Halloween, Thanksgiving, Christmas, New Year's, Valentine's, awards season, May the 4th, summer, back to school and Friday the 13th.
@@ -77,7 +77,7 @@ Google TV hides these settings, so grant them with adb:
 # Watch-time stats on the dashboard
 adb shell appops set app.marquee.tv GET_USAGE_STATS allow
 
-# Home-button takeover, YouTube redirect and leave-now alerts
+# Home-button takeover and YouTube redirect
 adb shell settings put secure enabled_accessibility_services app.marquee.tv/.system.MarqueeAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 ```
@@ -103,8 +103,6 @@ Open Marquee → **Settings → Accounts & setup** and scan the QR code. Your ph
 | OMDb key (optional, free tier) | omdbapi.com | IMDb and Rotten Tomatoes scores |
 | Watchmode key (optional, free tier) | api.watchmode.com | Play opens the title itself inside Netflix and other apps |
 | City | type it | weather |
-| Calendar iCal link | Google Calendar on a computer → Settings → your calendar → Integrate calendar → **Secret address in iCal format** | agenda and alerts |
-| Home address + Google Routes API key | Google Cloud console → enable **Routes API** → create an API key | live-traffic "leave by" times |
 | Google OAuth client (TVs and Limited Input devices) + secret | Google Cloud console → enable **YouTube Data API v3** → Credentials | "New from your subscriptions" |
 | Preferred YouTube app | dropdown (TizenTube is detected automatically) | YouTube redirect |
 
@@ -153,13 +151,11 @@ app/src/main/java/app/marquee/tv/
   plex/        Plex PIN sign-in, server discovery, library, artwork, trailers
   tmdb/        Trending, discover-by-service, where-to-watch (no rent/buy), artwork, OMDb ratings
   youtube/     Google device sign-in, new uploads from subscriptions
-  calendar/    iCal reader (time zones, recurrence, exceptions)
-  traffic/     Google Routes, traffic-aware drive time
   stats/       Weekly watch time from Android usage stats
-  recs/        Ranking (no AI), detail page "best way to watch", mood picker, search
+  recs/        Ranking (no AI), detail page "best way to watch", search
   setup/       Phone setup web page + QR codes
-  system/      Accessibility service (home takeover, YouTube redirect, alerts), screensaver, boot
-  ui/          Compose for TV: Dashboard, Cinematic, Ambient, Detail, Tonight, Search, Settings
+  system/      Accessibility service (home takeover, YouTube redirect), screensaver, boot
+  ui/          Compose for TV: Dashboard, Cinematic, Ambient, Detail, News, Search, Settings
 ```
 
 Fonts: Manrope and Instrument Serif, both under the SIL Open Font License (see `OFL-fonts.txt`).

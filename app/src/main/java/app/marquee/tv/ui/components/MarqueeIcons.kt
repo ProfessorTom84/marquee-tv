@@ -40,12 +40,4 @@ object MarqueeIcons {
         line { moveTo(8.7f, 10.5f); lineTo(9.5f, 10.5f) }
         line { moveTo(14.5f, 10.5f); lineTo(15.3f, 10.5f) }
     }
-
-    /** Two people: Pick Together. */
-    val People: ImageVector = icon("People") {
-        dot(8.5f, 8f, 3f)
-        dot(16f, 9f, 2.5f)
-        line { moveTo(3f, 19f); quadTo(3.5f, 13.5f, 8.5f, 13.5f); quadTo(13.5f, 13.5f, 14f, 19f) }
-        line { moveTo(14.5f, 14.2f); quadTo(15.2f, 14f, 16f, 14f); quadTo(20.5f, 14f, 21f, 19f) }
-    }
 }

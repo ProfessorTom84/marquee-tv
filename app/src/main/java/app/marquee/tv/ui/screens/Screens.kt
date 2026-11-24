@@ -5,8 +5,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,76 +73,6 @@ fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 .border(if (f) 2.dp else 1.dp, if (f) C.Text else if (selected) Color(0x99F5B54A) else Color(0x1FFFFFFF), CircleShape)
                 .padding(horizontal = 13.dp, vertical = 7.dp),
         ) { Text(label, style = T.sans(11.sp, FontWeight.SemiBold, if (selected) C.AmberSoft else C.Text)) }
-    }
-}
-
-// ============ "What should we watch?" (filters, no AI) ============
-
-private data class Mood(val label: String, val genres: List<Int>)
-private val moods = listOf(
-    Mood("Funny", listOf(35)), Mood("Thrilling", listOf(53, 28)), Mood("Feel-good", listOf(10751, 35)),
-    Mood("Mind-bending", listOf(878, 9648)), Mood("Scary", listOf(27)), Mood("Romantic", listOf(10749)),
-    Mood("Animated", listOf(16)), Mood("True stories", listOf(99, 36)), Mood("Epic", listOf(12, 14, 10752)), Mood("Crime", listOf(80)),
-)
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun TonightScreen(vm: MarqueeVm, nav: Nav) {
-    val scope = rememberCoroutineScope()
-    val chosen = remember { mutableStateListOf<Int>() }
-    var runtime by remember { mutableStateOf<Int?>(120) }
-    var type by remember { mutableStateOf("movie") }
-    var results by remember { mutableStateOf<List<Title>?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
-    fun run() { busy = true; scope.launch { results = runCatching { vm.pick(Recommender.Filters(chosen.flatMap { moods[it].genres }, runtime, type)) }.getOrDefault(emptyList()); busy = false } }
-
-    Box(Modifier.fillMaxSize().background(screenBg)) {
-        GrainOverlay()
-        LazyColumn(contentPadding = PaddingValues(vertical = 36.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            item {
-                Column(Modifier.padding(horizontal = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("QUICK PICKS · JUST ME", style = T.eyebrow)
-                    Text("Pick a mood. Only things you can watch right now, nothing to rent or buy.", style = T.serif(30.sp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        moods.forEachIndexed { i, m ->
-                            Box(if (i == 0) Modifier.focusRequester(first) else Modifier) {
-                                ChoiceChip(m.label, i in chosen) { if (i in chosen) chosen.remove(i) else chosen.add(i) }
-                            }
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Length", style = T.label, modifier = Modifier.padding(end = 4.dp))
-                        ChoiceChip("Under 90 min", runtime == 90) { runtime = 90 }
-                        ChoiceChip("Under 2 hrs", runtime == 120) { runtime = 120 }
-                        ChoiceChip("Any length", runtime == null) { runtime = null }
-                        Text("Type", style = T.label, modifier = Modifier.padding(start = 16.dp, end = 4.dp))
-                        ChoiceChip("Movie", type == "movie") { type = "movie" }
-                        ChoiceChip("Show", type == "tv") { type = "tv" }
-                        ChoiceChip("Either", type == "any") { type = "any" }
-                    }
-                    PillButton(if (busy) "Finding picks…" else "Show picks", primary = true, height = 38.dp) { if (!busy) run() }
-                }
-            }
-            results?.let { list ->
-                if (list.isEmpty()) item { Text("Nothing matched. Try another mood or a longer length.", style = T.body, modifier = Modifier.padding(horizontal = 48.dp)) }
-                else {
-                    item {
-                        Column {
-                            SectionHeader("Best matches", "${list.size} picks · your Plex first, then your services", Modifier.padding(start = 48.dp))
-                            MediaRow(list.take(3), 280.dp, 158.dp, onFocus = {}, onClick = { nav.go(Screen.Detail(it)) })
-                        }
-                    }
-                    if (list.size > 3) item {
-                        Column {
-                            SectionHeader("More like that", modifier = Modifier.padding(start = 48.dp))
-                            MediaRow(list.drop(3), 170.dp, 96.dp, onFocus = {}, onClick = { nav.go(Screen.Detail(it)) })
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 

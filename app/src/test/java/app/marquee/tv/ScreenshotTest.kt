@@ -21,15 +21,12 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
-import app.marquee.tv.calendar.CalEvent
 import app.marquee.tv.data.AvailKind
 import app.marquee.tv.data.Availability
 import app.marquee.tv.data.Source
 import app.marquee.tv.data.Title
 import app.marquee.tv.stats.AppShare
 import app.marquee.tv.stats.WeekStats
-import app.marquee.tv.system.UpNext
-import app.marquee.tv.traffic.Drive
 import app.marquee.tv.ui.components.GrainOverlay
 import app.marquee.tv.ui.components.MediaRow
 import app.marquee.tv.ui.components.PillButton
@@ -37,9 +34,6 @@ import app.marquee.tv.ui.components.Scrim
 import app.marquee.tv.ui.components.SectionHeader
 import app.marquee.tv.ui.components.WeatherBackdrop
 import app.marquee.tv.ui.home.AmbientContent
-import app.marquee.tv.ui.home.CalendarCard
-import app.marquee.tv.ui.home.NewsCard
-import app.marquee.tv.ui.home.WeatherCard
 import app.marquee.tv.ui.theme.C
 import app.marquee.tv.ui.theme.MarqueeTheme
 import app.marquee.tv.ui.theme.T
@@ -50,7 +44,6 @@ import com.android.resources.Density
 import com.android.resources.ScreenOrientation
 import org.junit.Rule
 import org.junit.Test
-import java.time.ZonedDateTime
 
 class ScreenshotTest {
     @get:Rule
@@ -65,12 +58,6 @@ class ScreenshotTest {
 
     private val weather = Weather(54, 61, 47, Sky.CLEAR, false, "Clear",
         listOf(HourForecast("8 PM", 53, Sky.CLEAR), HourForecast("9 PM", 52, Sky.CLEAR), HourForecast("10 PM", 50, Sky.CLEAR), HourForecast("11 PM", 49, Sky.CLEAR), HourForecast("12 AM", 48, Sky.CLEAR)), 0)
-    private val now = ZonedDateTime.now()
-    private val dinner = CalEvent("d", "Dinner at Lucia's", now.plusMinutes(48), now.plusMinutes(140), false, "Upper West Side, New York")
-    private val up = UpNext(dinner, Drive(24, 18, 9.5, 0), now.plusMinutes(20))
-    private val events = listOf(dinner,
-        CalEvent("s", "Kids' soccer", now.plusDays(1).withHour(9).withMinute(0), now.plusDays(1).withHour(10), false, "Prospect Park"),
-        CalEvent("f", "Flight to Chicago", now.plusDays(1).withHour(18).withMinute(15), now.plusDays(1).withHour(20), false, "LGA"))
     private val news = listOf(app.marquee.tv.news.NewsSection(app.marquee.tv.news.NewsCategory.LOCAL, "New York", listOf(
         app.marquee.tv.news.Story(app.marquee.tv.news.NewsCategory.LOCAL, "City council approves new waterfront park after two-year fight", "The Local Times",
             "https://example.com/1", System.currentTimeMillis() - 14 * 60_000, null, ""),
@@ -90,36 +77,44 @@ class ScreenshotTest {
         t("5", "The Bear", "IMDb 8.5", inc("Hulu"), "#2 ON HULU"),
     )
 
-    @Test fun dashboard() = paparazzi.snapshot {
-        MarqueeTheme {
-            Box(Modifier.fillMaxSize()) {
-                WeatherBackdrop(Sky.CLEAR, false)
-                Scrim(Brush.verticalGradient(0f to Color(0x33040610), 0.35f to Color(0x59040610), 0.62f to Color(0xE0040610), 0.92f to Color(0xFF04060F)))
-                GrainOverlay()
-                Column(Modifier.padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp)) {
-                        Text("7:42", style = T.serif(52.sp))
-                        Column(Modifier.padding(start = 14.dp, top = 10.dp)) {
-                            Text("Good evening, Tom", style = T.sans(14.sp, FontWeight.SemiBold))
-                            Text("Friday, October 30 · clear", style = T.sans(10.sp, color = C.Cool))
-                        }
-                        Spacer(Modifier.weight(1f))
-                        PillButton("What should we watch?") {}
-                    }
-                    Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        WeatherCard(weather, "New York", true, Modifier.width(240.dp).fillMaxHeight())
-                        CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
-                        NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
-                    }
-                    SectionHeader("Tonight for you", "Trending and top-rated · only what you can watch free", Modifier.padding(start = 48.dp, top = 8.dp))
-                    MediaRow(picks, 220.dp, 124.dp, onFocus = {}, onClick = {})
+    /**
+     * The Dashboard's real page over an afternoon sky, as it is before anything has focus (a screenshot can't press
+     * the remote; HomePreview makes pictures with the highlight, and HomeFocusTest checks where it goes).
+     */
+    @Test fun dashboard() {
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"))
+        app.marquee.tv.ui.components.SkyRendering.synchronous = true
+        app.marquee.tv.ui.components.SkyRendering.stillTime = 40f
+        val date = java.time.LocalDate.of(2026, 10, 10); val time = java.time.LocalTime.of(14, 14)
+        val day = Weather(61, 64, 47, Sky.PARTLY, true, "Partly cloudy", emptyList(), 0)
+        fun row(key: String, title: String, items: List<Title>) = app.marquee.tv.data.Row(key, title, "", items)
+        val home = app.marquee.tv.recs.HomeData(null, listOf(
+            row(app.marquee.tv.recs.FeedLayout.FOR_YOU, "This afternoon for you", picks + picks.map { it.copy(id = it.id + "b", title = it.title + " II") }),
+            row(app.marquee.tv.recs.FeedLayout.CONTINUE, "Continue watching", picks.take(3).map { it.copy(id = it.id + "c", progress = 0.4f) }),
+            row(app.marquee.tv.recs.FeedLayout.PLEX, "From your Plex", picks.map { it.copy(id = it.id + "p") }),
+        ), emptyList())
+        val apps = listOf("Plex", "Netflix", "Max", "Hulu", "Disney+", "Prime Video", "TizenTube", "Apple TV").map { app.marquee.tv.system.TvApp(it, "pkg.$it", null, null) }
+        val me = app.marquee.tv.data.Settings()
+        paparazzi.snapshot {
+            MarqueeTheme {
+                Box(Modifier.fillMaxSize()) {
+                    app.marquee.tv.ui.components.LiveSky(Sky.PARTLY, null, latitude = 40.99, longitude = -73.78, date = date, now = time, grain = true,
+                        overlay = Brush.verticalGradient(0.41f to Color(0x00040610), 0.56f to Color(0xAD040610), 1f to Color(0xF2040610)))
+                    app.marquee.tv.ui.home.DashboardPage(
+                        home, kotlinx.coroutines.flow.MutableSharedFlow(), onOpen = {},
+                        header = { app.marquee.tv.ui.home.DashboardHeader("Tom", day, true, java.time.LocalDateTime.of(date, time)) },
+                        actions = { app.marquee.tv.ui.home.TopActions(me, {}, {}, {}, {}) },
+                        news = { app.marquee.tv.ui.home.NewsLead(news, false) {} },
+                        apps = { form, onHint -> app.marquee.tv.ui.home.AppsRow(apps, {}, {}, null, shelf = form, onHint = onHint) },
+                        empty = {},
+                    )
                 }
             }
         }
     }
 
     @Test fun ambient() = paparazzi.snapshot {
-        MarqueeTheme { AmbientContent(emptyList(), weather, up, interactive = true) }
+        MarqueeTheme { AmbientContent(emptyList(), weather, interactive = true, now = java.time.LocalDateTime.of(2026, 10, 30, 19, 42)) }
     }
 
     @Test fun skies() = paparazzi.snapshot {
@@ -152,21 +147,6 @@ class ScreenshotTest {
                             Text(k.label, style = T.sans(9.sp, FontWeight.Bold), modifier = Modifier.padding(8.dp))
                         }
                     }
-                }
-            }
-        }
-    }
-
-    @Test fun skyDashboard() = paparazzi.snapshot {
-        app.marquee.tv.ui.components.SkyRendering.synchronous = true
-        MarqueeTheme {
-            Box(Modifier.fillMaxSize()) {
-                app.marquee.tv.ui.components.LiveSky(Sky.PARTLY, true, latitude = 40.9, now = java.time.LocalTime.of(16, 40),
-                    sunset = java.time.LocalTime.of(17, 50), sunrise = java.time.LocalTime.of(7, 25), grain = true,
-                    overlay = Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)))
-                Column(Modifier.padding(start = 48.dp, top = 260.dp)) {
-                    Text("This afternoon for you", style = T.rowTitle)
-                    MediaRow(picks, 220.dp, 124.dp, onFocus = {}, onClick = {})
                 }
             }
         }
@@ -216,40 +196,6 @@ class ScreenshotTest {
             }
         }
     }
-
-    private fun nightHome(orbs: Boolean) = paparazzi.snapshot {
-        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/New_York"))
-        app.marquee.tv.ui.components.SkyRendering.synchronous = true
-        app.marquee.tv.ui.components.SkyRendering.stillTime = 40f
-        MarqueeTheme {
-            Box(Modifier.fillMaxSize()) {
-                app.marquee.tv.ui.components.LiveSky(Sky.CLEAR, false, latitude = 40.99, longitude = -73.78, date = java.time.LocalDate.of(2026, 11, 6),
-                    now = java.time.LocalTime.of(21, 30), grain = true, orbs = orbs,
-                    overlay = Brush.verticalGradient(0f to Color(0x2E040610), 0.36f to Color(0x47040610), 0.6f to Color(0xC7040610), 1f to Color(0xF5040610)))
-                Column(Modifier.padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 48.dp)) {
-                        Text("9:30", style = T.serif(52.sp))
-                        Column(Modifier.padding(start = 14.dp, top = 10.dp)) {
-                            Text("Good evening, Tom", style = T.sans(14.sp, FontWeight.SemiBold))
-                            Text("Friday, November 6 · clear", style = T.sans(10.sp, color = C.Cool))
-                        }
-                        Spacer(Modifier.weight(1f))
-                        PillButton("Pick together") {}
-                    }
-                    Row(Modifier.fillMaxWidth().height(128.dp).padding(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        WeatherCard(weather, "Scarsdale", true, Modifier.width(240.dp).fillMaxHeight())
-                        CalendarCard(up, events, true, Modifier.width(320.dp).fillMaxHeight())
-                        NewsCard(news, false, Modifier.weight(1f).fillMaxHeight()) {}
-                    }
-                    SectionHeader("Tonight for you", "A mix from your Plex, your services and YouTube", Modifier.padding(start = 48.dp, top = 8.dp))
-                    MediaRow(picks, 220.dp, 124.dp, onFocus = {}, onClick = {})
-                }
-            }
-        }
-    }
-
-    @Test fun nightHomeBefore() = nightHome(orbs = true)
-    @Test fun nightHomeAfter() = nightHome(orbs = false)
 
     /**
      * Wildlife, frozen part-way across the Dashboard's sky. Each sighting is (creature, seed, how far through its

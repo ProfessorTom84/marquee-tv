@@ -68,7 +68,6 @@ private val sections = listOf(
     "profiles" to "Profiles",
     "accounts" to "Accounts & setup",
     "services" to "Your services",
-    "calendar" to "Calendar & alerts",
     "apps" to "Apps on home",
     "rows" to "Home rows",
     "home" to "Home button & players",
@@ -118,7 +117,6 @@ fun SettingsScreen(vm: MarqueeVm, nav: Nav, initial: String) {
                         "profiles" -> ProfilesSection(vm, s)
                         "accounts" -> AccountsSection(vm, s)
                         "services" -> ServicesSection(vm, s)
-                        "calendar" -> CalendarSection(vm, s)
                         "apps" -> AppsSection(vm, s)
                         "rows" -> RowsSection(vm, s)
                         "home" -> HomeButtonSection(vm, s)
@@ -203,7 +201,7 @@ private fun StyleSection(vm: MarqueeVm, s: Settings) {
             ValueRow("Mornings · 5 – 11 AM", s.morningStyle.label, onClick = { store.update { it.copy(morningStyle = next(it.morningStyle)) } })
             ValueRow("Evenings · 5 PM onward", s.eveningStyle.label, onClick = { store.update { it.copy(eveningStyle = next(it.eveningStyle)) } })
         }
-        Toggle(s.uiSounds, "Interface sounds", "A soft tick as you move, a quiet chime when Pick Together finds a match", {
+        Toggle(s.uiSounds, "Interface sounds", "A soft tick as you move", {
             store.update { it.copy(uiSounds = !it.uiSounds) }
             app.marquee.tv.ui.components.SoundFx.enabled = !s.uiSounds
         })
@@ -469,7 +467,7 @@ private fun AccountsSection(vm: MarqueeVm, s: Settings) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(Modifier.weight(1f).glass().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Phone setup", style = T.sans(14.sp, FontWeight.ExtraBold))
-            Text("Scan to paste keys, your calendar link, home address and services from your phone.", style = T.body)
+            Text("Scan to paste keys and choose your services from your phone.", style = T.body)
             if (setupUrl != null) Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 QrImage(setupUrl, 110.dp)
                 Column { Text("Or open", style = T.small); Text(setupUrl, style = T.sans(10.sp, FontWeight.Bold, C.AmberSoft)) }
@@ -539,7 +537,7 @@ private fun ServicesSection(vm: MarqueeVm, s: Settings) {
     H("Your services", "Picks only come from these plans, your Plex library, and genuinely free sources. Rentals, purchases and ad-supported tiers are never shown.")
     ValueRow(
         "Feed balance", s.feedBalance.label,
-        sub = "${s.feedBalance.blurb}. Applies to the home rows and Pick Together.",
+        sub = "${s.feedBalance.blurb}. Applies to the home rows.",
         onClick = { store.update { it.copy(feedBalance = it.feedBalance.next()) } },
         modifier = Modifier.padding(bottom = 8.dp),
     )
@@ -548,27 +546,6 @@ private fun ServicesSection(vm: MarqueeVm, s: Settings) {
         Toggle(p.id in s.services, p.name, if (installed) "App installed" else "App not installed on this TV", {
             store.update { it.copy(services = if (p.id in it.services) it.services - p.id else it.services + p.id) }
         })
-    }
-}
-
-@Composable
-private fun CalendarSection(vm: MarqueeVm, s: Settings) {
-    val events by vm.events.collectAsState()
-    val up by vm.upNext.collectAsState()
-    val store = vm.app.store
-    H("Calendar & alerts", "Marquee reads your calendar's private iCal link and warns you when it's time to leave, even over a movie.")
-    Group {
-        ValueRow("Calendars", if (s.calendarUrls.isEmpty()) "Add on phone setup page" else "${s.calendarUrls.size} linked · ${events.size} upcoming", onClick = {})
-        ValueRow("Home address", s.homeAddress.ifBlank { "Add on phone setup page" }, onClick = {})
-        ValueRow("Live traffic", if (vm.app.traffic.configured) "On" else "Needs a Routes API key", onClick = {})
-        ValueRow("Extra time before leaving", "${s.travelBufferMinutes} min", onClick = {
-            val opts = listOf(0, 5, 10, 15); store.update { it.copy(travelBufferMinutes = opts[(opts.indexOf(it.travelBufferMinutes) + 1) % opts.size]) }
-        })
-        ValueRow("Alerts over other apps", if (MarqueeAccessibilityService.running) "On" else "Turn on in Permissions", onClick = {})
-        up?.let { u ->
-            Text("Next: ${u.event.title} at ${app.marquee.tv.system.TimeFmt.full(u.event.start)}" + (u.leaveBy?.let { " · leave by ${app.marquee.tv.system.TimeFmt.full(it)}" } ?: ""), style = T.body, modifier = Modifier.padding(top = 6.dp))
-        }
-        PillButton("Reload calendar") { app.marquee.tv.net.Http.clearCache(); vm.refreshCalendar() }
     }
 }
 
@@ -585,7 +562,7 @@ private fun HomeButtonSection(vm: MarqueeVm, s: Settings) {
             sub = if (plezyInstalled) "Plezy is installed" else "Plezy isn't installed. Get it from the Play Store or plezy.app",
             onClick = { val o = listOf("AUTO", "PLEZY", "PLEX"); store.update { it.copy(plexPlayer = o[(o.indexOf(it.plexPlayer) + 1) % o.size]) } })
         Toggle(s.redirectPlex, "Open Plezy instead of the Plex app", "Applies wherever Plex would open, including from other apps", { store.update { it.copy(redirectPlex = !it.redirectPlex) } })
-        ValueRow("Accessibility service", if (MarqueeAccessibilityService.running) "Running" else "Off", sub = "Needed for Home takeover, YouTube redirect and leave-now alerts", onClick = {
+        ValueRow("Accessibility service", if (MarqueeAccessibilityService.running) "Running" else "Off", sub = "Needed for Home takeover and the YouTube redirect", onClick = {
             runCatching { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         })
         Toggle(s.takeoverHome, "Open Marquee when I press Home", "Also opens Marquee after the TV starts", { store.update { it.copy(takeoverHome = !it.takeoverHome) } })
@@ -660,7 +637,7 @@ private fun PermissionsSection(vm: MarqueeVm) {
 fun HealthPanel(vm: MarqueeVm) {
     val checks by vm.health.collectAsState()
     val settings by vm.settings.collectAsState()
-    LaunchedEffect(settings.tmdbKey, settings.omdbKey, settings.watchmodeKey, settings.routesKey, settings.plexServerUri, settings.calendarUrls, settings.youtubeRefreshToken, settings.cityName) { vm.checkHealth() }
+    LaunchedEffect(settings.tmdbKey, settings.omdbKey, settings.watchmodeKey, settings.plexServerUri, settings.youtubeRefreshToken, settings.cityName) { vm.checkHealth() }
     Column(Modifier.fillMaxWidth().glass().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Connection status", style = T.sans(14.sp, FontWeight.ExtraBold))
         if (checks.isEmpty()) Text("Checking…", style = T.small)

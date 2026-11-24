@@ -15,7 +15,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 
 /**
- * A tiny web page served by the TV on your home network, so keys, addresses and calendar links
+ * A tiny web page served by the TV on your home network, so keys and your services
  * can be typed or pasted on a phone instead of with the remote. Protected by a per-install token in the URL.
  */
 class SetupServer(
@@ -45,8 +45,6 @@ class SetupServer(
 
     override fun serve(session: IHTTPSession): Response {
         val token = store.value.setupToken
-        // Pick Together voting pages (open to anyone on your network holding the round's code).
-        if (session.uri.startsWith("/t/")) app.marquee.tv.together.Together.serve(session)?.let { return it }
         if (!session.uri.startsWith("/s/$token")) return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
         // Diagnostics: read-only GETs to Plex's own services with this TV's Plex sign-in (for troubleshooting trailers).
         if (session.uri.endsWith("/trailerprobe")) {
@@ -122,11 +120,8 @@ class SetupServer(
                 tmdbKey = p["tmdbKey"]?.trim() ?: s.tmdbKey,
                 omdbKey = p["omdbKey"]?.trim() ?: s.omdbKey,
                 watchmodeKey = p["watchmodeKey"]?.trim() ?: s.watchmodeKey,
-                routesKey = p["routesKey"]?.trim() ?: s.routesKey,
                 youtubeClientId = p["ytId"]?.trim() ?: s.youtubeClientId,
                 youtubeClientSecret = p["ytSecret"]?.trim() ?: s.youtubeClientSecret,
-                homeAddress = p["home"]?.trim() ?: s.homeAddress,
-                calendarUrls = p["ics"]?.lines()?.map { it.trim() }?.filter { it.startsWith("http") || it.startsWith("webcal") } ?: s.calendarUrls,
                 services = services,
                 feedBalance = p["balance"]?.let { app.marquee.tv.data.FeedBalance.parse(it) } ?: s.feedBalance,
                 news = p["news"]?.let { it == "on" } ?: s.news,
@@ -187,7 +182,7 @@ $svc
 <label for="balance">Feed balance</label><select id="balance" name="balance">${app.marquee.tv.data.FeedBalance.entries.joinToString("") { b ->
     "<option value=\"${b.name}\" ${if (b == s.feedBalance) "selected" else ""}>${esc(b.label)}: ${esc(b.blurb)}</option>"
 }}</select>
-<p class="hint">How much your home rows and Pick Together lean on your Plex versus your services.</p>
+<p class="hint">How much your home rows lean on your Plex versus your services.</p>
 <label for="region">Country code</label><input type="text" id="region" name="region" value="${esc(s.region)}">
 
 <h2>Profiles</h2>
@@ -211,13 +206,6 @@ ${s.profiles.mapIndexed { i, pr -> "<label for=\"profile_$i\">Profile ${i + 1} n
 
 <label for="unsplashKey">Unsplash access key (optional: real photos of where you live as the background)</label><input type="password" id="unsplashKey" name="unsplashKey" value="${esc(s.unsplashKey)}">
 <p class="hint">Free at <a href="https://unsplash.com/developers">unsplash.com/developers</a>. Then pick "Photo of my area" under Settings → Weather & background on the TV.</p>
-
-<h2>Calendar and leave-now alerts</h2>
-<label for="ics">Calendar iCal addresses, one per line</label><textarea id="ics" name="ics">${esc(s.calendarUrls.joinToString("\n"))}</textarea>
-<p class="hint">Google Calendar on a computer: Settings → your calendar → Integrate calendar → copy "Secret address in iCal format".</p>
-<label for="home">Home address (where trips start)</label><input type="text" id="home" name="home" value="${esc(s.homeAddress)}">
-<label for="routesKey">Google Routes API key (for live traffic)</label><input type="password" id="routesKey" name="routesKey" value="${esc(s.routesKey)}">
-<p class="hint">Google Cloud console → enable "Routes API" → Credentials → API key.</p>
 
 <h2>Updates</h2>
 <p class="hint">Marquee updates itself from the Releases of your private GitHub repo, installing while the TV is idle.</p>

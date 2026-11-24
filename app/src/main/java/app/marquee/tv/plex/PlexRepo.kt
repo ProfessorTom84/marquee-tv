@@ -136,14 +136,6 @@ class PlexRepo(private val store: SettingsStore) {
         runCatching { pms("/hubs/search?query=${q.urlEncode()}&limit=20", 1)["Hub"].arr.flatMap { it["Metadata"].arr } }
             .getOrDefault(emptyList()).filter { (it["type"].str ?: "") in setOf("movie", "show", "episode") }.map { map(it) }
 
-    /** Unwatched titles, newest arrivals first (what you've just downloaded and haven't seen). */
-    suspend fun unwatchedNewest(limit: Int = 40): List<Title> = sections().flatMap { sec ->
-        val type = if (sec.type == "movie") 1 else 2
-        val filter = if (sec.type == "movie") "unwatched=1" else "unwatchedLeaves=1"
-        runCatching { pms("/library/sections/${sec.key}/all?type=$type&$filter&sort=addedAt:desc&${size(limit)}", 10)["Metadata"].arr.map { map(it) } }
-            .getOrDefault(emptyList())
-    }.sortedByDescending { it.addedAt }
-
     data class RelatedHub(val title: String, val items: List<Title>)
 
     /** Plex's own "related" rows for a title: similar titles, more with an actor, more from the director… */

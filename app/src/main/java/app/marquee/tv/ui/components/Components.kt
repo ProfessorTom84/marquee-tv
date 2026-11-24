@@ -488,32 +488,20 @@ suspend fun androidx.compose.ui.focus.FocusRequester.claim(): Boolean {
     return false
 }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+/**
+ * The focus rules every row of cards shares; returns the requester that belongs on the row's first card.
+ *
+ * With [initialFocus] the first card takes focus once, when the screen first appears. (Lazy lists rebuild a row when
+ * it scrolls back into view; without the flag, coming back up to the row would yank focus back to its first card.)
+ * Each new [resetKey] slides the row back to its first card and, with [initialFocus], refocuses it.
+ */
 @Composable
-fun MediaRow(
-    items: List<Title>,
-    cardWidth: Dp,
-    cardHeight: Dp,
-    onFocus: (Title) -> Unit,
-    onClick: (Title) -> Unit,
-    dimmed: Boolean = false,
-    modifier: Modifier = Modifier,
-    initialFocus: Boolean = false,
-    resetKey: Any? = null, // when this changes the row scrolls back to its first card (and refocuses it if initialFocus)
-) {
+fun rememberRowStart(
+    rowState: androidx.compose.foundation.lazy.LazyListState, hasItems: Boolean, initialFocus: Boolean, resetKey: Any?,
+): androidx.compose.ui.focus.FocusRequester {
     val first = remember { androidx.compose.ui.focus.FocusRequester() }
-    // While the page scrolls, the next row's first screenful of cards is composed ahead of time (nested
-    // prefetch), so a row coming into view doesn't have to build five cards in one frame.
-    // (The strategy keeps per-list state, so each row gets its own.)
-    val rowState = androidx.compose.foundation.lazy.rememberLazyListState(
-        prefetchStrategy = remember { androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 5) },
-    )
-    // Duplicate keys crash a lazy row, so never trust the data to be unique.
-    val unique = remember(items) { items.distinctBy { it.id } }
-    // Focus the first card once, when the screen first appears. (Lazy lists rebuild a row when it scrolls back
-    // into view; without this flag, coming back up to the row would yank focus back to its first card.)
     var didInitialFocus by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    if (initialFocus && items.isNotEmpty() && !didInitialFocus) androidx.compose.runtime.LaunchedEffect(Unit) {
+    if (initialFocus && hasItems && !didInitialFocus) androidx.compose.runtime.LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(150)
         first.claim()
         didInitialFocus = true
@@ -528,6 +516,31 @@ fun MediaRow(
         rowState.scrollToItem(0)
         if (initialFocus) { kotlinx.coroutines.delay(60); first.claim() }
     }
+    return first
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun MediaRow(
+    items: List<Title>,
+    cardWidth: Dp,
+    cardHeight: Dp,
+    onFocus: (Title) -> Unit,
+    onClick: (Title) -> Unit,
+    dimmed: Boolean = false,
+    modifier: Modifier = Modifier,
+    initialFocus: Boolean = false,
+    resetKey: Any? = null, // when this changes the row scrolls back to its first card (and refocuses it if initialFocus)
+) {
+    // While the page scrolls, the next row's first screenful of cards is composed ahead of time (nested
+    // prefetch), so a row coming into view doesn't have to build five cards in one frame.
+    // (The strategy keeps per-list state, so each row gets its own.)
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState(
+        prefetchStrategy = remember { androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 5) },
+    )
+    // Duplicate keys crash a lazy row, so never trust the data to be unique.
+    val unique = remember(items) { items.distinctBy { it.id } }
+    val first = rememberRowStart(rowState, items.isNotEmpty(), initialFocus, resetKey)
     PinnedRow(48.dp) {
         androidx.compose.foundation.lazy.LazyRow(
             // Moving up or down into a row lands on the card you last had there (already at the left edge, since

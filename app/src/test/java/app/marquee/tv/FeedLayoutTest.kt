@@ -146,15 +146,6 @@ class FeedLayoutTest {
         assertEquals("On Netflix and Hulu", FeedLayout.servicesPhrase(spread))
     }
 
-    @Test fun pickTogetherFollowsTheBalance() {
-        val s = (0 until 12).map { svc(it, 8, "Netflix") }
-        val p = (0 until 12).map { plex(it) }
-        fun firstSix(b: FeedBalance) = Recommender.togetherMix(s, p, b).take(6).count { it.source == Source.PLEX }
-        assertEquals(3, firstSix(FeedBalance.MORE_PLEX))
-        assertEquals(2, firstSix(FeedBalance.BALANCED))
-        assertEquals(1, firstSix(FeedBalance.MORE_SERVICES))
-    }
-
     // ---------------- Your own row order (Settings → Home rows) ----------------
 
     @Test fun yourOrderGroupsRowsTogetherWithForYouFirst() {

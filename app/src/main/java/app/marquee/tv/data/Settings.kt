@@ -9,13 +9,13 @@ import java.util.UUID
 
 /** Home styles you can choose. AMBIENT is only the idle/clock screen (any button closes it), never a pickable style. */
 enum class HomeStyle(val label: String, val blurb: String) {
-    DASHBOARD("Dashboard", "Weather, calendar and stats up top, picks below"),
+    DASHBOARD("Dashboard", "The sky, the news, and two rows of picks at a time"),
     CINEMATIC("Cinematic", "One title fills the screen, trailers play behind it"),
     AMBIENT("Ambient", "Artwork, a big clock and only what matters now");
 }
 
 /**
- * How the home rows and Pick Together lean between your Plex library and your streaming services.
+ * How the home rows lean between your Plex library and your streaming services.
  * [svc], [plex], [yt] and [cont] are the "For you" row's lane weights (percent).
  */
 enum class FeedBalance(val label: String, val blurb: String, val svc: Int, val plex: Int, val yt: Int, val cont: Int) {
@@ -47,7 +47,7 @@ data class Settings(
     val eveningStyle: HomeStyle = HomeStyle.CINEMATIC,
     val idleMinutes: Int = 10,
     val previews: String = "PLEX", // OFF | PLEX
-    val feedBalance: FeedBalance = FeedBalance.BALANCED, // home rows and Pick Together: Plex vs your services
+    val feedBalance: FeedBalance = FeedBalance.BALANCED, // home rows: Plex vs your services
     val news: Boolean = true, // news on the Dashboard (local, state, national, politics, tech, business)
     val profiles: List<Profile> = listOf(Profile("Me", "AUTO")),
     val activeProfile: Int = 0,
@@ -66,7 +66,6 @@ data class Settings(
     val latitude: Double = Double.NaN,
     val longitude: Double = Double.NaN,
     val useFahrenheit: Boolean = true,
-    val homeAddress: String = "",
     // Services (TMDB provider ids) the household pays for
     val services: Set<Int> = emptySet(),
     val region: String = "US",
@@ -74,7 +73,6 @@ data class Settings(
     val tmdbKey: String = "",
     val omdbKey: String = "",
     val watchmodeKey: String = "", // optional: open titles directly inside streaming apps
-    val routesKey: String = "",
     val youtubeClientId: String = "",
     val youtubeClientSecret: String = "",
     // Accounts
@@ -90,8 +88,6 @@ data class Settings(
     val unsplashKey: String = "",
     val background: String = "SKY", // SKY | PHOTO
     val previewPlace: String = "BACKGROUND", // BACKGROUND | CARD
-    val calendarUrls: List<String> = emptyList(),
-    val travelBufferMinutes: Int = 5,
     val appOrder: List<String> = emptyList(),  // your order for the apps ribbon (package names)
     val hiddenApps: Set<String> = emptySet(),   // apps hidden from the ribbon (still in All apps)
     val rowOrder: List<String> = emptyList(),  // your order of home row groups (FeedLayout.RowGroup names); empty = Marquee's mix
@@ -208,13 +204,11 @@ class SettingsStore(context: Context) {
             latitude = sp.getFloat("latitude", Float.NaN).toDouble(),
             longitude = sp.getFloat("longitude", Float.NaN).toDouble(),
             useFahrenheit = sp.getBoolean("useFahrenheit", d.useFahrenheit),
-            homeAddress = s("homeAddress"),
             services = s("services").split(',').mapNotNull { it.trim().toIntOrNull() }.toSet(),
             region = s("region").ifBlank { d.region },
             tmdbKey = s("tmdbKey"),
             omdbKey = s("omdbKey"),
             watchmodeKey = s("watchmodeKey"),
-            routesKey = s("routesKey"),
             youtubeClientId = s("youtubeClientId"),
             youtubeClientSecret = s("youtubeClientSecret"),
             plexClientId = s("plexClientId"),
@@ -229,8 +223,6 @@ class SettingsStore(context: Context) {
             youtubeInterests = if (sp.contains("youtubeInterests")) s("youtubeInterests").split(',').filter { it.isNotBlank() }.toSet() else d.youtubeInterests,
             background = s("background").let { if (it == "PHOTO") it else "SKY" }, // Spotlight and Illustrated retired
             previewPlace = s("previewPlace").ifBlank { d.previewPlace },
-            calendarUrls = s("calendarUrls").split('\n').map { it.trim() }.filter { it.isNotEmpty() },
-            travelBufferMinutes = sp.getInt("travelBufferMinutes", d.travelBufferMinutes),
             appOrder = s("appOrder").split(',').filter { it.isNotBlank() },
             hiddenApps = s("hiddenApps").split(',').filter { it.isNotBlank() }.toSet(),
             rowOrder = s("rowOrder").split(',').filter { it.isNotBlank() },
@@ -271,13 +263,11 @@ class SettingsStore(context: Context) {
             putFloat("latitude", v.latitude.toFloat())
             putFloat("longitude", v.longitude.toFloat())
             putBoolean("useFahrenheit", v.useFahrenheit)
-            putString("homeAddress", v.homeAddress)
             putString("services", v.services.joinToString(","))
             putString("region", v.region)
             putString("tmdbKey", v.tmdbKey)
             putString("omdbKey", v.omdbKey)
             putString("watchmodeKey", v.watchmodeKey)
-            putString("routesKey", v.routesKey)
             putString("youtubeClientId", v.youtubeClientId)
             putString("youtubeClientSecret", v.youtubeClientSecret)
             putString("plexClientId", v.plexClientId)
@@ -292,9 +282,10 @@ class SettingsStore(context: Context) {
             putString("youtubeInterests", v.youtubeInterests.joinToString(","))
             putString("background", v.background)
             putString("previewPlace", v.previewPlace)
-            putString("calendarUrls", v.calendarUrls.joinToString("\n"))
-            putInt("travelBufferMinutes", v.travelBufferMinutes)
             remove("watchlist") // retired feature
+            // The calendar and its leave-by alerts are gone: don't keep the private calendar link, the home address
+            // or the traffic key that were saved for them.
+            remove("calendarUrls"); remove("homeAddress"); remove("routesKey"); remove("travelBufferMinutes")
             putString("appOrder", v.appOrder.joinToString(","))
             putString("hiddenApps", v.hiddenApps.joinToString(","))
             putString("rowOrder", v.rowOrder.joinToString(","))

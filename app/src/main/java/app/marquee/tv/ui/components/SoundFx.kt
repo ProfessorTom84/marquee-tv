@@ -15,13 +15,13 @@ import kotlin.math.sin
 
 /**
  * Marquee's interface sounds: synthesised here (no audio files), short and very quiet.
- * A soft tick as you move, a two-note "select", a falling note for Back, and a warm three-note chime
- * when Pick Together finds a match. Sounds only follow your own button presses, never automatic focus.
+ * A soft tick as you move, a two-note "select" and a falling note for Back. Sounds only follow your own button
+ * presses, never automatic focus.
  */
 object SoundFx {
     @Volatile var enabled = true
     private var pool: SoundPool? = null
-    private var tick = 0; private var select = 0; private var back = 0; private var match = 0
+    private var tick = 0; private var select = 0; private var back = 0
     @Volatile private var lastKey = 0L
     @Volatile private var lastTick = 0L
 
@@ -38,7 +38,6 @@ object SoundFx {
                 tick = load("tick", tickSound())
                 select = load("select", selectSound())
                 back = load("back", backSound())
-                match = load("match", matchSound())
                 pool = p
             }
         }.start()
@@ -56,7 +55,6 @@ object SoundFx {
 
     fun select() { if (SystemClock.uptimeMillis() - lastKey < 600) play(select, 0.11f) }
     fun back() = play(back, 0.09f)
-    fun match() = play(match, 0.16f)
 
     private fun play(id: Int, vol: Float) {
         if (!enabled || id == 0) return
@@ -82,16 +80,6 @@ object SoundFx {
         val a = s(784f, t) * env(t, 0.003f, 45f)
         val b = if (t > 0.04f) s(587.3f, t - 0.04f) * env(t - 0.04f, 0.003f, 38f) else 0f
         (a * 0.5f + b * 0.5f)
-    }
-
-    /** A soft bell arpeggio (C6, E6, G6) with a little inharmonic shimmer, like a struck glass. */
-    private fun matchSound() = tone(1.4f) { t ->
-        fun bell(f: Float, start: Float): Float {
-            val x = t - start
-            if (x < 0f) return 0f
-            return (s(f, x) + 0.22f * s(f * 2.76f, x) * exp(-x * 9f) + 0.1f * s(f * 5.4f, x) * exp(-x * 16f)) * env(x, 0.004f, 3.6f)
-        }
-        (bell(1046.5f, 0f) + bell(1318.5f, 0.11f) + bell(1568f, 0.22f) + 0.5f * bell(2093f, 0.36f)) * 0.22f
     }
 
     private fun writeWav(f: File, samples: FloatArray) {

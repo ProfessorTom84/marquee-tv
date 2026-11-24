@@ -1,6 +1,5 @@
 package app.marquee.tv.ui
 
-import app.marquee.tv.together.Together
 import app.marquee.tv.system.MarqueeAccessibilityService
 import app.marquee.tv.data.Availability
 import app.marquee.tv.data.AvailKind
@@ -8,7 +7,6 @@ import app.marquee.tv.data.Source
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.marquee.tv.MarqueeApp
-import app.marquee.tv.calendar.CalEvent
 import app.marquee.tv.data.HomeStyle
 import app.marquee.tv.data.Title
 import app.marquee.tv.recs.DetailData
@@ -24,7 +22,6 @@ import app.marquee.tv.recs.FeedLayout
 import app.marquee.tv.news.NewsSection
 import app.marquee.tv.news.ArticleReader
 import app.marquee.tv.system.TvApp
-import app.marquee.tv.system.UpNext
 import app.marquee.tv.weather.Sky
 import app.marquee.tv.weather.Weather
 import app.marquee.tv.weather.WeatherRepo
@@ -47,8 +44,6 @@ class MarqueeVm : ViewModel() {
     val news = MutableStateFlow<List<NewsSection>>(emptyList())
     private val newsFile = java.io.File(app.filesDir, "news.json")
     private val newsList = kotlinx.serialization.builtins.ListSerializer(NewsSection.serializer())
-    val events = MutableStateFlow<List<CalEvent>>(emptyList())
-    val upNext = MutableStateFlow<UpNext?>(null)
     val apps = MutableStateFlow<List<TvApp>>(emptyList())
     val areaPhoto = MutableStateFlow<AreaPhoto?>(null)
     val ambientActive = MutableStateFlow(false)
@@ -115,7 +110,6 @@ class MarqueeVm : ViewModel() {
             while (true) {
                 delay(60_000)
                 n++
-                refreshUpNext()
                 if (n % 15 == 0) refreshWeather()
                 if (n % 20 == 0) refreshNews()
                 if (n % 180 == 0) refreshPhoto()
@@ -154,7 +148,7 @@ class MarqueeVm : ViewModel() {
     }
 
     fun refreshAll() {
-        refreshHome(); refreshWeather(); refreshNews(); refreshCalendar(); refreshApps(); refreshPhoto()
+        refreshHome(); refreshWeather(); refreshNews(); refreshApps(); refreshPhoto()
     }
 
     fun refreshHome() {
@@ -212,19 +206,9 @@ class MarqueeVm : ViewModel() {
         }
     }
 
-    fun refreshCalendar() = viewModelScope.launch {
-        events.value = withContext(Dispatchers.IO) { runCatching { app.alerts.upcoming() }.getOrDefault(emptyList()) }
-        refreshUpNext()
-    }
-
-    private fun refreshUpNext() = viewModelScope.launch {
-        upNext.value = withContext(Dispatchers.IO) { runCatching { app.alerts.upNext(events.value) }.getOrNull() }
-    }
-
     fun refreshApps() = viewModelScope.launch { apps.value = withContext(Dispatchers.IO) { app.apps.installed() } }
 
     suspend fun detail(t: Title): DetailData = withContext(Dispatchers.IO) { app.recommender.detail(t) }
-    suspend fun pick(f: Recommender.Filters): List<Title> = withContext(Dispatchers.IO) { app.recommender.pick(f) }
     suspend fun search(q: String): List<Title> = withContext(Dispatchers.IO) { app.recommender.search(q) }
     suspend fun readArticle(link: String) = ArticleReader.read(link)
 
@@ -242,9 +226,6 @@ class MarqueeVm : ViewModel() {
 
     /** Fires when Home is pressed while Marquee is already up: screens jump back to the top. */
     val homeTaps = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-
-    /** Pick Together: builds the shared deck in the view model, so it survives the screen changing to "shuffling". */
-    fun startTogetherRound() = viewModelScope.launch { Together.buildDeck { f -> withContext(Dispatchers.IO) { app.recommender.togetherCandidates(f) } } }
 
     // ---- Arranging the apps ribbon ----
     /** Moves an app one place left (-1) or right (+1) in the ribbon as currently shown, and remembers the whole order. */

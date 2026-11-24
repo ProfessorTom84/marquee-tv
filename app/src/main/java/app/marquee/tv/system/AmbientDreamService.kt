@@ -40,7 +40,6 @@ class AmbientDreamService : DreamService(), LifecycleOwner, SavedStateRegistryOw
 
     private var art by mutableStateOf<List<String>>(emptyList())
     private var weather by mutableStateOf<Weather?>(null)
-    private var up by mutableStateOf<UpNext?>(null)
 
     override fun onCreate() {
         super.onCreate()
@@ -57,7 +56,7 @@ class AmbientDreamService : DreamService(), LifecycleOwner, SavedStateRegistryOw
             setViewTreeLifecycleOwner(this@AmbientDreamService)
             setViewTreeSavedStateRegistryOwner(this@AmbientDreamService)
             setViewTreeViewModelStoreOwner(this@AmbientDreamService)
-            setContent { MarqueeTheme { AmbientContent(art, weather, up, interactive = false) } }
+            setContent { MarqueeTheme { AmbientContent(art, weather, interactive = false) } }
         }
         setContentView(view)
         registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
@@ -70,7 +69,6 @@ class AmbientDreamService : DreamService(), LifecycleOwner, SavedStateRegistryOw
         withContext(Dispatchers.IO) {
             art = runCatching { (app.plex.recentlyAdded() + app.plex.unwatchedTopRated(40)).mapNotNull { it.backdropUrl }.distinct().shuffled().take(30) }.getOrDefault(emptyList())
             if (s.hasLocation) weather = runCatching { WeatherRepo.forecast(s.latitude, s.longitude, s.useFahrenheit) }.getOrNull()
-            up = runCatching { app.alerts.upNext() }.getOrNull()
         }
     }
 

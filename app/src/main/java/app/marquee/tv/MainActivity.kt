@@ -32,7 +32,6 @@ import app.marquee.tv.ui.detail.DetailScreen
 import app.marquee.tv.ui.home.HomeScreen
 import app.marquee.tv.ui.screens.AllAppsScreen
 import app.marquee.tv.ui.screens.SearchScreen
-import app.marquee.tv.ui.screens.TonightScreen
 import app.marquee.tv.ui.settings.SettingsScreen
 import app.marquee.tv.ui.theme.C
 import app.marquee.tv.ui.theme.MarqueeTheme
@@ -40,8 +39,6 @@ import app.marquee.tv.ui.theme.MarqueeTheme
 sealed interface Screen {
     data object Home : Screen
     data class Detail(val title: Title) : Screen
-    data object PickTogether : Screen
-    data object QuickPicks : Screen
     data object Search : Screen
     data object Apps : Screen
     data class Settings(val section: String = "style") : Screen
@@ -142,8 +139,6 @@ private fun Root(vm: MarqueeVm, nav: Nav) {
             when (s) {
                 Screen.Home -> HomeScreen(vm, nav)
                 is Screen.Detail -> DetailScreen(vm, nav, s.title)
-                Screen.PickTogether -> app.marquee.tv.ui.screens.PickTogetherScreen(vm, nav)
-                Screen.QuickPicks -> TonightScreen(vm, nav)
                 Screen.Search -> SearchScreen(vm, nav)
                 Screen.Apps -> AllAppsScreen(vm, nav)
                 is Screen.Settings -> SettingsScreen(vm, nav, s.section)
